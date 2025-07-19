@@ -1,0 +1,24 @@
+# Workflow Rule
+
+Follow these rules when using context files for PromptFlow AI development:
+
+- **For coding tasks (e.g., connectors, LangGraph nodes, FastAPI)**: Reference `Implementation_Plan.md` for step-by-step guidance.
+- **For UI-related tasks (e.g., input form, chat interface, result display, workflow visualization)**: Use `UI_UX_Documentation.md` for layout and interaction specs.
+- **For folder/file creation or validation**: Check `Project_Structure.md` for structure and naming conventions.
+- **For error handling or debugging**: Update and reference `Bug_Tracking.md` to log issues and resolutions.
+
+**Context Management**:
+- Load **only the relevant context file** for the current task to avoid overloading context window.
+- Validate consistency between context files and code before proceeding.
+- If a task is unclear, refer to `PRD.md` for intent and requirements.
+
+**LangGraph Execution**:
+- Define connectors as LangGraph nodes, with edges for data flow and conditionals.
+- Follow tasks in `Implementation_Plan.md` sequentially, creating nodes/edges as specified.
+- Implement conversational planning in the planner node, allowing multi-turn dialogue for user modifications (e.g., changing connectors, adding steps).
+- Use inline suggestions to refine Python code, ensuring alignment with specifications.
+
+**Specifications as Code**:
+- Treat all context files as versionable, human-readable specifications.
+- Update `Bug_Tracking.md` for any errors, ensuring traceability.
+- Ensure LangGraph nodes reference connector schemas for clear intent.

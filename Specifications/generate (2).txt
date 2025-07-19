@@ -1,0 +1,23 @@
+# Generate Rule 
+
+Read the PRD (`context/PRD.md`) and generate the following files in the `context/` folder:
+
+1. **Implementation_Plan.md**: A detailed, step-by-step guide to build the MVP, covering:
+   - Project setup (Python environment, FastAPI,LangChain, LangGraph, dependencies)
+   - Connector development (3–5 connectors: `search_blogs`, `http requests/ Webhook`, `gmail`, `send_email`)
+   - Conversational LangGraph-based agent planning (multi-turn dialogue with CoT, RAG using OpenAI  text-embedding-3-small, and user modifications)
+   - Graph execution with memory and user-defined triggers
+   - FastAPI endpoint for prompt submission and conversational interaction
+   - Optional scheduling and UI with react-flow visualization
+2. **UI_UX_Documentation.md**: Specifications for a minimal UI, including:
+   - Prompt input field and conversational chat interface
+   - Result display (JSON or formatted text)
+   - Optional LangGraph workflow visualization using react-flow
+3. **Project_Structure.md**: Folder and file structure for the Python/FastAPI backend and optional Next.js frontend, with reasoning for modularity and scalability.
+4. **Bug_Tracking.md**: A markdown table for logging bugs, with columns for ID, title, description, status, severity, and resolution steps.
+
+Ensure all files:
+- Align with the PRD’s tech stack and LangGraph for orchestration.
+- Follow modular, scalable design principles with clear node/edge definitions.
+- Use unambiguous language to serve as executable specifications.
+- Incorporate Context Engineering principles (e.g., avoid context window overflow, version-control artifacts).
