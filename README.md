@@ -1,184 +1,249 @@
 # PromptFlow AI Platform
 
-A no-code AI automation platform that enables users to create and run AI-driven workflows through natural language prompts.
+A no-code AI automation platform that enables users to create complex workflows through natural language conversations.
 
-## Project Structure
+## 🚀 Features
 
-```
-promptflow-ai-platform/
-├── backend/                    # FastAPI backend application
-│   ├── app/
-│   │   ├── api/               # API routes and endpoints
-│   │   ├── connectors/        # Connector implementations
-│   │   │   ├── base.py       # Base connector interface
-│   │   │   └── registry.py   # Connector registry
-│   │   ├── core/             # Core application components
-│   │   │   ├── config.py     # Application configuration
-│   │   │   └── exceptions.py # Custom exceptions
-│   │   ├── models/           # Pydantic data models
-│   │   │   ├── base.py       # Base models and enums
-│   │   │   ├── connector.py  # Connector-related models
-│   │   │   ├── conversation.py # Chat and conversation models
-│   │   │   └── execution.py  # Workflow execution models
-│   │   ├── services/         # Business logic services
-│   │   └── main.py          # FastAPI application entry point
-│   ├── requirements.txt      # Python dependencies
-│   ├── run.py               # Development server runner
-│   └── .env.example         # Environment variables template
-├── frontend/                 # Next.js frontend application
-│   ├── app/                 # Next.js app directory
-│   │   ├── globals.css      # Global styles
-│   │   ├── layout.tsx       # Root layout component
-│   │   └── page.tsx         # Home page component
-│   ├── lib/                 # Utility libraries
-│   │   ├── api.ts          # API client configuration
-│   │   └── types.ts        # TypeScript type definitions
-│   ├── package.json        # Node.js dependencies
-│   ├── next.config.js      # Next.js configuration
-│   ├── tailwind.config.js  # Tailwind CSS configuration
-│   └── tsconfig.json       # TypeScript configuration
-└── .kiro/specs/            # Feature specifications
-    └── promptflow-ai-platform/
-        ├── requirements.md  # Feature requirements
-        ├── design.md       # Technical design
-        └── tasks.md        # Implementation tasks
-```
+- **Conversational Workflow Builder**: Create workflows by describing what you want in natural language
+- **Smart Connector Recommendations**: AI-powered RAG system suggests the best connectors for your needs
+- **Visual Workflow Editor**: Drag-and-drop interface for fine-tuning workflows
+- **Secure Authentication**: Multi-layered security with encrypted token storage
+- **Real-time Execution**: Monitor and manage workflow executions in real-time
+- **Vector-based Search**: Semantic similarity search using pgvector and Azure OpenAI embeddings
 
-## Getting Started
+## 🏗️ Architecture
 
-### Backend Setup
+### Backend (FastAPI)
+- **RAG System**: Retrieval-Augmented Generation for intelligent connector recommendations
+- **Vector Database**: pgvector for semantic similarity search
+- **Authentication**: Secure token-based auth with encryption
+- **Database**: Supabase (PostgreSQL) with real-time capabilities
+- **AI Integration**: Azure OpenAI for embeddings and completions
 
-#### Option 1: Automated Setup (Recommended)
+### Frontend (Next.js)
+- **Modern React**: Next.js 14 with App Router
+- **TypeScript**: Full type safety
+- **UI Components**: Shadcn/ui with Tailwind CSS
+- **Real-time Updates**: Supabase real-time subscriptions
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
+## 🛠️ Tech Stack
 
-2. Run the setup script:
-   
-   **Windows:**
-   ```bash
-   setup.bat
-   ```
-   
-   **Unix/Linux/macOS:**
-   ```bash
-   chmod +x setup.sh
-   ./setup.sh
-   ```
+| Component | Technology |
+|-----------|------------|
+| **Backend API** | FastAPI, Python 3.8+ |
+| **Database** | Supabase (PostgreSQL + pgvector) |
+| **AI Services** | Azure OpenAI (GPT-4, text-embedding-3-small) |
+| **Frontend** | Next.js 14, TypeScript, Tailwind CSS |
+| **Authentication** | Supabase Auth + Custom JWT |
+| **Vector Search** | pgvector with cosine similarity |
+| **Testing** | pytest, pytest-asyncio |
 
-3. Activate the virtual environment:
-   
-   **Windows:**
-   ```bash
-   activate.bat
-   ```
-   
-   **Unix/Linux/macOS:**
-   ```bash
-   source venv/bin/activate
-   ```
+## 🚀 Quick Start
 
-#### Option 2: Manual Setup
+### Prerequisites
+- Python 3.8+
+- Node.js 18+
+- Supabase account
+- Azure OpenAI access (for RAG system)
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-
-2. Create and activate virtual environment:
-   ```bash
-   python -m venv venv
-   
-   # Windows
-   venv\Scripts\activate.bat
-   
-   # Unix/Linux/macOS
-   source venv/bin/activate
-   ```
-
-3. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Copy environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-
-5. Configure your environment variables in `.env`
-
-6. Initialize the database:
-   ```bash
-   python scripts/init_db.py
-   ```
-
-7. Run the development server:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-The backend API will be available at `http://localhost:8000`
-
-#### Testing
-
-Run basic tests to verify setup:
+### 1. Clone the Repository
 ```bash
-python tests/test_basic.py
+git clone https://github.com/yourusername/promptflow-ai.git
+cd promptflow-ai
 ```
 
-### Frontend Setup
+### 2. Backend Setup
+```bash
+cd backend
 
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-2. Install Node.js dependencies:
-   ```bash
-   npm install
-   ```
+# Install dependencies
+pip install -r requirements.txt
 
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
+# Copy environment template
+cp .env.example .env
+# Edit .env with your credentials
+```
 
-The frontend will be available at `http://localhost:3000`
+### 3. Configure Environment Variables
+Edit `backend/.env`:
+```env
+# Database (Required)
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_anon_key
 
-## Core Interfaces
+# Azure OpenAI (Required for RAG system)
+AZURE_OPENAI_ENDPOINT=your_azure_openai_endpoint
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key
 
-### BaseConnector
+# Security
+SECRET_KEY=your_secret_key
+```
 
-All connectors must inherit from `BaseConnector` and implement:
-- `execute()`: Main connector logic
-- `validate_params()`: Parameter validation
-- `get_auth_requirements()`: Authentication requirements
+### 4. Initialize Database
+```bash
+# Set up database schema
+python scripts/init_db.py
 
-### Data Models
+# Populate with sample connectors (requires Azure OpenAI)
+python scripts/setup_rag_database.py
+```
 
-- **WorkflowPlan**: Complete workflow definition with nodes and edges
-- **ConnectorMetadata**: Connector information for RAG retrieval
-- **ConversationContext**: Chat session management
-- **ExecutionResult**: Workflow execution results
+### 5. Start Backend Server
+```bash
+uvicorn app.main:app --reload
+```
 
-## Environment Variables
+### 6. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-Key environment variables to configure:
+### 7. Access the Application
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
 
-- `SUPABASE_URL`: Supabase project URL
-- `SUPABASE_KEY`: Supabase anonymous key
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key
-- `SECRET_KEY`: Application secret key
+## 📁 Project Structure
 
-## Next Steps
+```
+promptflow-ai/
+├── backend/                    # FastAPI backend
+│   ├── app/
+│   │   ├── api/               # API endpoints
+│   │   │   ├── auth.py        # Authentication endpoints
+│   │   │   └── rag.py         # RAG system endpoints
+│   │   ├── core/              # Core functionality
+│   │   │   ├── auth.py        # Authentication logic
+│   │   │   ├── database.py    # Database connection
+│   │   │   └── exceptions.py  # Custom exceptions
+│   │   ├── models/            # Pydantic models
+│   │   ├── services/          # Business logic
+│   │   │   └── rag.py         # RAG system implementation
+│   │   ├── data/              # Sample data
+│   │   └── connectors/        # Connector implementations
+│   ├── scripts/               # Setup and utility scripts
+│   ├── tests/                 # Test suite
+│   └── requirements.txt       # Python dependencies
+├── frontend/                  # Next.js frontend
+│   ├── app/                   # App Router pages
+│   ├── components/            # React components
+│   ├── lib/                   # Utilities and types
+│   └── package.json           # Node.js dependencies
+├── .kiro/                     # Kiro IDE specifications
+│   └── specs/                 # Feature specifications
+└── docs/                      # Documentation
+```
 
-1. Set up database layer and authentication (Task 2)
-2. Implement RAG system for connector retrieval (Task 3)
-3. Build base connector framework (Task 4)
-4. Create core connectors (Task 5)
+## 🧠 RAG System
 
-See `.kiro/specs/promptflow-ai-platform/tasks.md` for the complete implementation plan.
+The platform includes a sophisticated RAG (Retrieval-Augmented Generation) system for intelligent connector recommendations:
+
+### Features
+- **Semantic Search**: Uses Azure OpenAI embeddings for understanding user intent
+- **Vector Storage**: pgvector extension for fast similarity search
+- **Smart Ranking**: Combines semantic similarity with usage statistics
+- **Category Filtering**: Filter connectors by category for precision
+- **Performance Optimized**: Sub-second query response times
+
+### API Endpoints
+- `GET /api/v1/rag/search?query=send email` - Search connectors
+- `GET /api/v1/rag/connectors/popular` - Get popular connectors
+- `GET /api/v1/rag/categories` - List all categories
+- `GET /api/v1/rag/health` - System health check
+
+## 🧪 Testing
+
+### Backend Tests
+```bash
+cd backend
+
+# Run all tests
+python -m pytest
+
+# Run specific test files
+python -m pytest tests/test_rag.py -v
+
+# Run performance tests
+python -m pytest tests/test_rag_performance.py -v
+
+# Test RAG system structure (no external dependencies)
+python test_rag_simple.py
+```
+
+### API Testing
+```bash
+# Test RAG API endpoints (requires running server)
+python test_rag_api.py
+```
+
+## 🔧 Development
+
+### Adding New Connectors
+1. Define connector metadata in `backend/app/data/sample_connectors.py`
+2. Implement connector logic in `backend/app/connectors/`
+3. Update embeddings: `POST /api/v1/rag/admin/update-embeddings`
+
+### Database Migrations
+```bash
+# Apply schema changes
+python scripts/init_db.py
+
+# Update connector embeddings
+python scripts/setup_rag_database.py
+```
+
+## 🚀 Deployment
+
+### Backend (FastAPI)
+- Deploy to any Python-compatible platform (Heroku, Railway, etc.)
+- Ensure environment variables are configured
+- Run database initialization scripts
+
+### Frontend (Next.js)
+- Deploy to Vercel, Netlify, or similar
+- Configure environment variables for API endpoints
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+- Follow Python PEP 8 for backend code
+- Use TypeScript for all frontend code
+- Write tests for new features
+- Update documentation as needed
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- **Documentation**: Check the `/docs` folder
+- **Issues**: Create a GitHub issue
+- **Discussions**: Use GitHub Discussions for questions
+
+## 🎯 Roadmap
+
+- [x] Authentication system with secure token storage
+- [x] RAG system for intelligent connector recommendations
+- [ ] Visual workflow editor
+- [ ] More connector integrations
+- [ ] Workflow templates
+- [ ] Team collaboration features
+- [ ] Advanced scheduling options
+- [ ] Workflow analytics dashboard
+
+---
+
+**Note**: The RAG system requires Azure OpenAI credentials to function fully. You can develop other parts of the application and add the AI credentials later before implementing task 4.

@@ -95,3 +95,24 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+
+# Environment variables and secrets #
+####################################
+.env
+.env.local
+.env.production
+.env.staging
+*.pem
+*.key
+secrets/
+
+# Database files #
+##################
+*.db
+*.sqlite3
+
+# Temporary files #
+##################
+*.tmp
+*.temp
+.pytest_cache/

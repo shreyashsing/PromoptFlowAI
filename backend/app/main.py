@@ -8,6 +8,7 @@ from app.core.database import init_database, close_database
 from app.api.auth import router as auth_router
 from app.api.rag import router as rag_router
 from app.services.rag import init_rag_system
+from app.connectors.core.register import register_core_connectors
 import logging
 
 # Configure logging
@@ -58,6 +59,10 @@ async def startup_event():
         # Initialize RAG system
         await init_rag_system()
         logger.info("RAG system initialized successfully")
+        
+        # Register core connectors
+        registration_result = register_core_connectors()
+        logger.info(f"Core connectors registered: {registration_result['registered']}/{registration_result['total']}")
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
