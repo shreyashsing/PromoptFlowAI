@@ -8,6 +8,8 @@ from app.core.database import init_database, close_database
 from app.api.auth import router as auth_router
 from app.api.rag import router as rag_router
 from app.api.agent import router as agent_router
+from app.api.workflows import router as workflows_router
+from app.api.executions import router as executions_router
 from app.services.rag import init_rag_system
 from app.services.conversational_agent import init_conversational_agent
 from app.connectors.core.register import register_core_connectors
@@ -38,6 +40,8 @@ def create_application() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(rag_router, prefix="/api/v1")
     app.include_router(agent_router, prefix="/api/v1")
+    app.include_router(workflows_router, prefix="/api/v1")
+    app.include_router(executions_router, prefix="/api/v1")
 
     return app
 

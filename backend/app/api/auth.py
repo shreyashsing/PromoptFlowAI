@@ -2,7 +2,7 @@
 Authentication API endpoints.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
 from app.core.auth import get_auth_service, get_current_user, AuthService
 from app.core.database import get_database
@@ -14,13 +14,13 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 class SignUpRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     full_name: Optional[str] = None
 
 
 class SignInRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 

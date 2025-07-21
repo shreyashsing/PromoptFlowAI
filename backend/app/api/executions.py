@@ -17,7 +17,7 @@ from app.models.execution import ExecutionResult, ExecutionStatus, NodeExecution
 from app.services.workflow_orchestrator import WorkflowOrchestrator
 
 
-router = APIRouter(prefix="/api/executions", tags=["executions"])
+router = APIRouter(prefix="/executions", tags=["executions"])
 
 # Global orchestrator instance
 orchestrator = WorkflowOrchestrator()
