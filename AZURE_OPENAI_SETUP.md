@@ -46,8 +46,8 @@ After your resource is created:
 
 3. **Deploy Chat Model** (Optional, for future features):
    - Create another deployment
-   - Select model: `gpt-4` or `gpt-4o`
-   - Deployment name: `gpt-4o` (or your preferred name)
+   - Select model: `gpt-4.1` or `gpt-4o`
+   - Deployment name: `gpt-4.1` (or your preferred name)
    - Click "Create"
 
 ### 3. Get Your Credentials
@@ -69,8 +69,8 @@ Update your `backend/.env` file:
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 ```
 
@@ -99,7 +99,7 @@ If successful, you should see:
 - Initial setup: ~$0.01 for 12 sample connectors
 - Ongoing usage: Minimal for typical queries
 
-**GPT-4 (Optional)**:
+**GPT-4.1 (Optional)**:
 - ~$0.03 per 1,000 input tokens
 - ~$0.06 per 1,000 output tokens
 - Only used for conversational features (future implementation)

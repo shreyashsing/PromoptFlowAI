@@ -35,9 +35,9 @@
 - [ ] Store connector metadata in Supabase with embeddings via ` text-embedding-3-small` for RAG.
 - [ ] Write challenge prompts in `docs/challenge_prompts/` (e.g., “Sync Google Sheets with Notion,” “Notify Slack for Stripe payments”).
   
-## Phase 2.5: Function Calling Setup for Azure GPT-4o (Day 3)
+## Phase 2.5: Function Calling Setup for Azure GPT-4.1 (Day 3)
 
-To enable GPT-4o to reason about, select, and call connectors directly via function calling, define each connector as a callable function schema using JSON.
+To enable GPT-4.1 to reason about, select, and call connectors directly via function calling, define each connector as a callable function schema using JSON.
 
 ### Tasks:
 - [ ] Create a new folder `backend/connectors/schemas/` to store function schemas.

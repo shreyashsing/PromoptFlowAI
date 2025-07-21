@@ -41,3 +41,13 @@ class RAGError(RAGException):
 class EmbeddingError(RAGException):
     """Exception raised for embedding generation errors."""
     pass
+
+
+class AgentError(PromptFlowException):
+    """Exception raised by conversational agent operations."""
+    pass
+
+
+class PlanningError(PromptFlowException):
+    """Exception raised during workflow planning operations."""
+    pass

@@ -33,7 +33,7 @@ PromptFlow AI is a no-code platform that enables non-technical users to create a
 ## Preferred Tech Stack:
 - **Frontend**: Next.js + Tailwind CSS (optional for MVP)
 - **Backend**: Python + FastAPI (for LangGraph integration)
-- **LLM**: Azure OpenAI (GPT-4o deployment) for conversational planning and function calling.
+- **LLM**: Azure OpenAI (GPT-4.1) for conversational planning and function calling.
 - **Database**: Supabase + pgvector (for RAG and connector metadata)
 - **Auth**: Supabase Auth
 - **Orchestration**: LangGraph (for graph-based workflow execution)

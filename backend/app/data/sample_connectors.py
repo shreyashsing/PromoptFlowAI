@@ -91,7 +91,7 @@ SAMPLE_CONNECTORS = [
             "type": "object",
             "properties": {
                 "prompt": {"type": "string", "description": "The prompt to send to the AI model"},
-                "model": {"type": "string", "default": "gpt-4", "description": "OpenAI model to use"},
+                "model": {"type": "string", "default": "gpt-4.1", "description": "OpenAI model to use"},
                 "max_tokens": {"type": "integer", "default": 1000, "description": "Maximum tokens in response"},
                 "temperature": {"type": "number", "default": 0.7, "description": "Response creativity (0-1)"},
                 "system_message": {"type": "string", "description": "System message to set context"}

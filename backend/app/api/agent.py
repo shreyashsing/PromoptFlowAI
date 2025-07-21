@@ -1,0 +1,374 @@
+"""
+API endpoints for the conversational agent system.
+Handles prompt submission, chat interactions, and workflow planning.
+"""
+import logging
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, Field
+
+from app.services.conversational_agent import (
+    get_conversational_agent,
+    ConversationalAgent
+)
+from app.models.conversation import (
+    ConversationContext,
+    PlanModificationRequest,
+    PlanConfirmationRequest
+)
+from app.models.base import WorkflowPlan
+from app.core.auth import get_current_user
+from app.core.exceptions import AgentError, PlanningError
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+# Request/Response models
+
+class PromptRequest(BaseModel):
+    """Request model for initial prompt submission."""
+    prompt: str = Field(..., min_length=1, max_length=2000, description="User's natural language prompt")
+    session_id: Optional[str] = Field(None, description="Optional existing session ID")
+
+
+class ChatRequest(BaseModel):
+    """Request model for chat interactions."""
+    message: str = Field(..., min_length=1, max_length=1000, description="User's message")
+    session_id: str = Field(..., description="Session ID for the conversation")
+
+
+class AgentResponse(BaseModel):
+    """Response model for agent interactions."""
+    message: str = Field(..., description="Agent's response message")
+    session_id: str = Field(..., description="Session ID")
+    conversation_state: str = Field(..., description="Current conversation state")
+    current_plan: Optional[WorkflowPlan] = Field(None, description="Current workflow plan if available")
+
+
+class PlanModificationResponse(BaseModel):
+    """Response model for plan modifications."""
+    modified_plan: WorkflowPlan = Field(..., description="Modified workflow plan")
+    explanation: str = Field(..., description="Explanation of changes made")
+    session_id: str = Field(..., description="Session ID")
+
+
+# API Endpoints
+
+@router.post("/run-agent", response_model=AgentResponse)
+async def run_agent(
+    request: PromptRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Process initial user prompt and start conversational workflow planning.
+    
+    This endpoint handles the initial user request and begins the interactive
+    workflow planning process. The agent will analyze the prompt, recognize
+    intent, and either generate a workflow plan or ask for clarification.
+    """
+    try:
+        user_id = current_user["id"]
+        
+        # Process the initial prompt
+        context, response = await agent.process_initial_prompt(
+            prompt=request.prompt,
+            user_id=user_id,
+            session_id=request.session_id
+        )
+        
+        logger.info(f"Processed initial prompt for user {user_id}, session {context.session_id}")
+        
+        return AgentResponse(
+            message=response,
+            session_id=context.session_id,
+            conversation_state=context.state.value,
+            current_plan=context.current_plan
+        )
+        
+    except AgentError as e:
+        logger.error(f"Agent error in run_agent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Agent processing error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in run_agent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during prompt processing"
+        )
+
+
+@router.post("/chat-agent", response_model=AgentResponse)
+async def chat_agent(
+    request: ChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Handle conversational interactions for workflow planning.
+    
+    This endpoint manages multi-turn conversations where users can:
+    - Provide additional information during planning
+    - Request modifications to proposed workflow plans
+    - Approve or reject workflow plans
+    - Ask questions about the planning process
+    """
+    try:
+        # Handle conversation turn
+        context, response = await agent.handle_conversation_turn(
+            message=request.message,
+            session_id=request.session_id
+        )
+        
+        logger.info(f"Handled conversation turn for session {request.session_id}")
+        
+        return AgentResponse(
+            message=response,
+            session_id=context.session_id,
+            conversation_state=context.state.value,
+            current_plan=context.current_plan
+        )
+        
+    except AgentError as e:
+        logger.error(f"Agent error in chat_agent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Conversation error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in chat_agent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during conversation"
+        )
+
+
+@router.post("/modify-plan", response_model=PlanModificationResponse)
+async def modify_plan(
+    request: PlanModificationRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Modify an existing workflow plan based on user feedback.
+    
+    This endpoint allows users to request specific changes to a workflow plan.
+    The agent will analyze the modification request and update the plan accordingly.
+    """
+    try:
+        # Modify the workflow plan
+        modified_plan, explanation = await agent.modify_workflow_plan(request)
+        
+        logger.info(f"Modified workflow plan for session {request.session_id}")
+        
+        return PlanModificationResponse(
+            modified_plan=modified_plan,
+            explanation=explanation,
+            session_id=request.session_id
+        )
+        
+    except PlanningError as e:
+        logger.error(f"Planning error in modify_plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Plan modification error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in modify_plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during plan modification"
+        )
+
+
+@router.post("/confirm-plan", response_model=AgentResponse)
+async def confirm_plan(
+    request: PlanConfirmationRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Confirm or reject a workflow plan.
+    
+    This endpoint handles user confirmation of workflow plans. If approved,
+    the plan is saved and marked as active. If rejected, the conversation
+    returns to the planning state for further modifications.
+    """
+    try:
+        # Handle plan confirmation
+        context, response = await agent.confirm_workflow_plan(request)
+        
+        logger.info(f"Handled plan confirmation for session {request.session_id}")
+        
+        return AgentResponse(
+            message=response,
+            session_id=context.session_id,
+            conversation_state=context.state.value,
+            current_plan=context.current_plan
+        )
+        
+    except AgentError as e:
+        logger.error(f"Agent error in confirm_plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Plan confirmation error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in confirm_plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during plan confirmation"
+        )
+
+
+@router.get("/conversation/{session_id}", response_model=Dict[str, Any])
+async def get_conversation(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Retrieve conversation context and history.
+    
+    This endpoint allows clients to retrieve the current state of a conversation,
+    including message history, current plan, and conversation state.
+    """
+    try:
+        # Load conversation context
+        context = await agent._load_conversation_context(session_id)
+        
+        if not context:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {session_id} not found"
+            )
+        
+        # Verify user owns this conversation
+        if context.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this conversation"
+            )
+        
+        logger.info(f"Retrieved conversation {session_id} for user {current_user['id']}")
+        
+        return {
+            "session_id": context.session_id,
+            "user_id": context.user_id,
+            "messages": [msg.dict() for msg in context.messages],
+            "current_plan": context.current_plan.dict() if context.current_plan else None,
+            "state": context.state.value,
+            "created_at": context.created_at.isoformat(),
+            "updated_at": context.updated_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_conversation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error retrieving conversation"
+        )
+
+
+@router.get("/conversations", response_model=Dict[str, Any])
+async def list_conversations(
+    limit: int = 20,
+    offset: int = 0,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    List user's conversations.
+    
+    This endpoint returns a paginated list of the user's conversation sessions,
+    including basic metadata and current state.
+    """
+    try:
+        from app.core.database import get_database
+        
+        db = await get_database()
+        user_id = current_user["id"]
+        
+        # Get conversations for the user
+        result = db.table("conversations").select(
+            "session_id", "state", "created_at", "updated_at"
+        ).eq("user_id", user_id).order("updated_at", desc=True).range(offset, offset + limit - 1).execute()
+        
+        conversations = []
+        for row in result.data:
+            conversations.append({
+                "session_id": row["session_id"],
+                "state": row["state"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"]
+            })
+        
+        logger.info(f"Listed {len(conversations)} conversations for user {user_id}")
+        
+        return {
+            "conversations": conversations,
+            "total": len(conversations),
+            "limit": limit,
+            "offset": offset
+        }
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in list_conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error listing conversations"
+        )
+
+
+@router.delete("/conversation/{session_id}")
+async def delete_conversation(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Delete a conversation session.
+    
+    This endpoint allows users to delete their conversation sessions and
+    associated data.
+    """
+    try:
+        from app.core.database import get_database
+        
+        db = await get_database()
+        user_id = current_user["id"]
+        
+        # Verify conversation exists and belongs to user
+        result = db.table("conversations").select("user_id").eq("session_id", session_id).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {session_id} not found"
+            )
+        
+        if result.data[0]["user_id"] != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this conversation"
+            )
+        
+        # Delete the conversation
+        db.table("conversations").delete().eq("session_id", session_id).execute()
+        
+        logger.info(f"Deleted conversation {session_id} for user {user_id}")
+        
+        return {"message": "Conversation deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_conversation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error deleting conversation"
+        )
