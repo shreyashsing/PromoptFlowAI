@@ -51,3 +51,18 @@ class AgentError(PromptFlowException):
 class PlanningError(PromptFlowException):
     """Exception raised during workflow planning operations."""
     pass
+
+
+class TriggerException(PromptFlowException):
+    """Exception raised by trigger system operations."""
+    pass
+
+
+class TriggerException(PromptFlowException):
+    """Exception raised by trigger system operations."""
+    pass
+
+
+class TriggerException(PromptFlowException):
+    """Exception raised by trigger system operations."""
+    pass

@@ -27,8 +27,7 @@ class DatabaseManager:
             # Configure client options for better performance
             options = ClientOptions(
                 auto_refresh_token=True,
-                persist_session=True,
-                detect_session_in_url=False
+                persist_session=True
             )
             
             self._client = create_client(
@@ -96,3 +95,15 @@ async def init_database() -> None:
 async def close_database() -> None:
     """Close database connection on shutdown."""
     await db_manager.close()
+
+
+def get_supabase_client() -> Client:
+    """Get Supabase client synchronously for use in services."""
+    if not db_manager._initialized or not db_manager._client:
+        # Create a simple client without complex options for testing
+        return create_client(
+            supabase_url=settings.SUPABASE_URL,
+            supabase_key=settings.SUPABASE_KEY
+        )
+    
+    return db_manager.client
