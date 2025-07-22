@@ -57,6 +57,48 @@ class WorkflowOrchestrator:
         self.triggers: Dict[str, Callable] = {}
         self.checkpointer = MemorySaver()
         
+    @handle_database_errors("validate_workflow")
+    @log_function_performance("validate_workflow")
+    async def validate_workflow(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate a workflow definition.
+        
+        Args:
+            workflow: The workflow definition to validate
+            
+        Returns:
+            Dict with validation results
+        """
+        # Simple validation logic
+        errors = []
+        
+        # Check required fields
+        if not workflow.get("name"):
+            errors.append("Workflow name is required")
+            
+        if not workflow.get("steps") and not workflow.get("nodes"):
+            errors.append("Workflow must have steps or nodes array")
+        
+        # Check steps if present
+        steps = workflow.get("steps", [])
+        if steps:
+            for i, step in enumerate(steps):
+                if not step.get("id"):
+                    errors.append(f"Step {i+1} missing required 'id' field")
+                if not step.get("connector_id"):
+                    errors.append(f"Step {i+1} missing required 'connector_id' field")
+        
+        # Check nodes if present
+        nodes = workflow.get("nodes", [])
+        if nodes:
+            for i, node in enumerate(nodes):
+                if not node.get("id"):
+                    errors.append(f"Node {i+1} missing required 'id' field")
+                    
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors
+        }
+        
     @handle_database_errors("execute_workflow")
     @log_function_performance("execute_workflow")
     async def execute_workflow(self, workflow: WorkflowPlan) -> ExecutionResult:

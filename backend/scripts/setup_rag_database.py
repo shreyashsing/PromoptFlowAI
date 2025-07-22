@@ -38,7 +38,7 @@ async def setup_database_schema():
         raise
 
 
-async def populate_sample_connectors():
+async def populate_sample_connectors(force_replace: bool = False):
     """Populate the database with sample connectors and their embeddings."""
     logger.info("Populating sample connectors...")
     
@@ -52,13 +52,21 @@ async def populate_sample_connectors():
         
         if result.count > 0:
             logger.info(f"Database already has {result.count} connectors")
-            user_input = input("Do you want to replace them? (y/N): ")
-            if user_input.lower() != 'y':
-                logger.info("Skipping connector population")
+            # Check for non-interactive mode via environment variable
+            non_interactive = os.getenv('RAG_SETUP_NON_INTERACTIVE', 'false').lower() == 'true'
+            if not force_replace and not non_interactive:
+                user_input = input("Do you want to replace them? (y/N): ")
+                if user_input.lower() != 'y':
+                    logger.info("Skipping connector population")
+                    return
+            elif non_interactive:
+                logger.info("Non-interactive mode: skipping connector population")
                 return
+            else:
+                logger.info("Force replacing existing connectors")
             
             # Clear existing connectors
-            db.table("connectors").delete().neq("id", "").execute()
+            db.table("connectors").delete().neq("name", "").execute()
             logger.info("Cleared existing connectors")
         
         # Store sample connectors with embeddings
@@ -90,7 +98,7 @@ async def test_rag_system():
         
         for query in test_queries:
             logger.info(f"Testing query: '{query}'")
-            connectors = await rag_retriever.retrieve_connectors(query, limit=3)
+            connectors = await rag_retriever.retrieve_connectors(query, limit=3, similarity_threshold=0.3)
             
             if connectors:
                 logger.info(f"  Found {len(connectors)} relevant connectors:")

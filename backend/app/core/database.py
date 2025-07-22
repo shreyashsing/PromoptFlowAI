@@ -73,16 +73,10 @@ class DatabaseManager:
             return
             
         try:
-            # Configure client options for better performance
-            options = ClientOptions(
-                auto_refresh_token=True,
-                persist_session=True
-            )
-            
+            # Create simple client without complex options
             self._client = create_client(
                 supabase_url=settings.SUPABASE_URL,
-                supabase_key=settings.SUPABASE_KEY,
-                options=options
+                supabase_key=settings.SUPABASE_KEY
             )
             
             # Test connection

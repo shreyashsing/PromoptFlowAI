@@ -151,12 +151,25 @@ async def insert_initial_connectors(db_client):
             }
         ]
         
-        # Insert connectors
+        # Insert connectors with proper conflict resolution
         for connector in initial_connectors:
-            result = db_client.table('connectors').upsert(connector).execute()
-            logger.info(f"Inserted connector: {connector['name']}")
+            try:
+                result = db_client.table('connectors').upsert(
+                    connector, 
+                    on_conflict="name"
+                ).execute()
+                logger.info(f"Inserted connector: {connector['name']}")
+            except Exception as e:
+                # If upsert fails, try a simple insert check
+                existing = db_client.table('connectors').select('name').eq('name', connector['name']).execute()
+                if not existing.data:
+                    # Connector doesn't exist, try regular insert
+                    result = db_client.table('connectors').insert(connector).execute()
+                    logger.info(f"Inserted new connector: {connector['name']}")
+                else:
+                    logger.info(f"Connector already exists, skipping: {connector['name']}")
         
-        logger.info(f"Inserted {len(initial_connectors)} initial connectors")
+        logger.info(f"Processed {len(initial_connectors)} initial connectors")
         
     except Exception as e:
         logger.error(f"Failed to insert initial connectors: {e}")
