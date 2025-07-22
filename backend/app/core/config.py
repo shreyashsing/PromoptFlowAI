@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # Logging settings
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"
+    LOG_FILE: str = ""
+    LOG_CONSOLE: bool = True
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

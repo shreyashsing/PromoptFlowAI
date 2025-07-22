@@ -19,6 +19,10 @@ from app.models.conversation import (
 from app.models.base import WorkflowPlan
 from app.core.auth import get_current_user
 from app.core.exceptions import AgentError, PlanningError
+from app.core.error_handler import handle_api_error
+from app.core.error_utils import ErrorBoundary, create_error_context
+from app.core.monitoring import record_request_time
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +73,20 @@ async def run_agent(
     workflow planning process. The agent will analyze the prompt, recognize
     intent, and either generate a workflow plan or ask for clarification.
     """
-    try:
-        user_id = current_user["id"]
-        
+    start_time = time.time()
+    user_id = current_user["id"]
+    
+    async with ErrorBoundary(
+        operation="run_agent",
+        user_id=user_id,
+        context=create_error_context(
+            user_id=user_id,
+            operation="run_agent",
+            prompt_length=len(request.prompt),
+            session_id=request.session_id
+        ),
+        reraise=False
+    ) as boundary:
         # Process the initial prompt
         context, response = await agent.process_initial_prompt(
             prompt=request.prompt,
@@ -79,7 +94,10 @@ async def run_agent(
             session_id=request.session_id
         )
         
-        logger.info(f"Processed initial prompt for user {user_id}, session {context.session_id}")
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        logger.info(f"Processed initial prompt for user {user_id}, session {context.session_id} in {duration:.3f}s")
         
         return AgentResponse(
             message=response,
@@ -87,18 +105,14 @@ async def run_agent(
             conversation_state=context.state.value,
             current_plan=context.current_plan
         )
-        
-    except AgentError as e:
-        logger.error(f"Agent error in run_agent: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent processing error: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in run_agent: {e}")
+    
+    # If error occurred, return error response
+    if boundary.error_occurred:
+        duration = time.time() - start_time
+        record_request_time(duration)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during prompt processing"
+            detail=boundary.error_response.get("user_message", "An error occurred processing your request")
         )
 
 
@@ -117,14 +131,30 @@ async def chat_agent(
     - Approve or reject workflow plans
     - Ask questions about the planning process
     """
-    try:
+    start_time = time.time()
+    user_id = current_user["id"]
+    
+    async with ErrorBoundary(
+        operation="chat_agent",
+        user_id=user_id,
+        context=create_error_context(
+            user_id=user_id,
+            operation="chat_agent",
+            session_id=request.session_id,
+            message_length=len(request.message)
+        ),
+        reraise=False
+    ) as boundary:
         # Handle conversation turn
         context, response = await agent.handle_conversation_turn(
             message=request.message,
             session_id=request.session_id
         )
         
-        logger.info(f"Handled conversation turn for session {request.session_id}")
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        logger.info(f"Handled conversation turn for session {request.session_id} in {duration:.3f}s")
         
         return AgentResponse(
             message=response,
@@ -132,18 +162,14 @@ async def chat_agent(
             conversation_state=context.state.value,
             current_plan=context.current_plan
         )
-        
-    except AgentError as e:
-        logger.error(f"Agent error in chat_agent: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Conversation error: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in chat_agent: {e}")
+    
+    # If error occurred, return error response
+    if boundary.error_occurred:
+        duration = time.time() - start_time
+        record_request_time(duration)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during conversation"
+            detail=boundary.error_response.get("user_message", "An error occurred during conversation")
         )
 
 

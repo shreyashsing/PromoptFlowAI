@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from uuid import uuid4
+import time
 
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from pydantic import BaseModel, Field
@@ -20,6 +21,10 @@ from app.core.database import get_supabase_client
 from app.models.base import WorkflowPlan, WorkflowNode, WorkflowEdge, Trigger, WorkflowStatus
 from app.services.workflow_orchestrator import WorkflowOrchestrator
 from app.models.execution import ExecutionResult
+from app.core.error_handler import handle_api_error
+from app.core.error_utils import ErrorBoundary, create_error_context, handle_database_errors
+from app.core.monitoring import record_request_time
+from app.core.exceptions import WorkflowException, ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +85,7 @@ class ExecuteWorkflowRequest(BaseModel):
 # API Endpoints
 
 @router.post("", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+@handle_database_errors("create_workflow")
 async def create_workflow(
     request: CreateWorkflowRequest,
     current_user: Dict[str, Any] = Depends(get_current_user)
@@ -90,9 +96,32 @@ async def create_workflow(
     This endpoint allows users to create new workflow definitions with nodes,
     edges, and triggers. The workflow is initially created in DRAFT status.
     """
-    try:
+    start_time = time.time()
+    user_id = current_user["id"]
+    
+    async with ErrorBoundary(
+        operation="create_workflow",
+        user_id=user_id,
+        context=create_error_context(
+            user_id=user_id,
+            operation="create_workflow",
+            workflow_name=request.name,
+            nodes_count=len(request.nodes),
+            edges_count=len(request.edges)
+        ),
+        reraise=False
+    ) as boundary:
+        # Validate workflow structure
+        if request.nodes and request.edges:
+            node_ids = {node.id for node in request.nodes}
+            for edge in request.edges:
+                if edge.source_id not in node_ids or edge.target_id not in node_ids:
+                    raise ValidationException(
+                        f"Edge references non-existent node: {edge.source_id} -> {edge.target_id}",
+                        field="edges"
+                    )
+        
         workflow_id = str(uuid4())
-        user_id = current_user["id"]
         now = datetime.utcnow()
         
         # Create workflow plan
@@ -127,22 +156,25 @@ async def create_workflow(
         response = supabase.table("workflows").insert(workflow_data).execute()
         
         if not response.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create workflow"
+            raise WorkflowException(
+                f"Failed to create workflow '{request.name}'",
+                details={"workflow_name": request.name}
             )
         
-        logger.info(f"Created workflow {workflow_id} for user {user_id}")
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        logger.info(f"Created workflow {workflow_id} for user {user_id} in {duration:.3f}s")
         
         return WorkflowResponse(**workflow.dict())
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating workflow: {str(e)}")
+    
+    # If error occurred, return error response
+    if boundary.error_occurred:
+        duration = time.time() - start_time
+        record_request_time(duration)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error creating workflow"
+            detail=boundary.error_response.get("user_message", "Failed to create workflow")
         )
 
 

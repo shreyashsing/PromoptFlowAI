@@ -25,6 +25,7 @@ from app.models.connector import ConnectorExecutionContext
 from app.connectors.registry import ConnectorRegistry
 from app.core.exceptions import WorkflowException, ConnectorException
 from app.core.database import get_supabase_client
+from app.core.error_utils import handle_database_errors, log_function_performance, ErrorBoundary
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,8 @@ class WorkflowOrchestrator:
         self.triggers: Dict[str, Callable] = {}
         self.checkpointer = MemorySaver()
         
+    @handle_database_errors("execute_workflow")
+    @log_function_performance("execute_workflow")
     async def execute_workflow(self, workflow: WorkflowPlan) -> ExecutionResult:
         """
         Execute a workflow using LangGraph orchestration.

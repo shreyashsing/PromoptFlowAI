@@ -14,6 +14,7 @@ from app.connectors.base import BaseConnector
 from app.models.connector import ConnectorResult, ConnectorExecutionContext, AuthRequirements
 from app.models.base import AuthType
 from app.core.exceptions import ConnectorException, AuthenticationException
+from app.core.error_utils import handle_connector_errors, handle_external_api_errors
 
 
 class GmailConnector(BaseConnector):
@@ -139,6 +140,8 @@ class GmailConnector(BaseConnector):
             ]
         }
     
+    @handle_connector_errors("Gmail")
+    @handle_external_api_errors("Gmail API", retryable=True)
     async def execute(self, params: Dict[str, Any], context: ConnectorExecutionContext) -> ConnectorResult:
         """
         Execute Gmail operation with the provided parameters.

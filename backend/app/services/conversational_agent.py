@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.database import get_database
 from app.core.exceptions import AgentError, PlanningError
+from app.core.error_utils import handle_external_api_errors, log_function_performance, handle_database_errors
 from app.models.conversation import (
     ConversationContext, 
     ChatMessage, 
@@ -85,6 +86,8 @@ class ConversationalAgent:
             logger.error(f"Failed to initialize conversational agent: {e}")
             raise AgentError(f"Failed to initialize agent: {e}")
     
+    @handle_external_api_errors("Azure OpenAI", retryable=True)
+    @log_function_performance("process_initial_prompt")
     async def process_initial_prompt(
         self, 
         prompt: str, 
@@ -156,6 +159,8 @@ class ConversationalAgent:
             logger.error(f"Failed to process initial prompt: {e}")
             raise AgentError(f"Failed to process prompt: {e}")
     
+    @handle_external_api_errors("Azure OpenAI", retryable=True)
+    @log_function_performance("handle_conversation_turn")
     async def handle_conversation_turn(
         self, 
         message: str, 
@@ -360,6 +365,8 @@ class ConversationalAgent:
                 ]
             )
     
+    @handle_external_api_errors("Azure OpenAI", retryable=True)
+    @log_function_performance("generate_workflow_plan")
     async def _generate_workflow_plan(
         self, 
         prompt: str, 
@@ -722,6 +729,7 @@ class ConversationalAgent:
 
     # Database and persistence methods
     
+    @handle_database_errors("save_conversation_context")
     async def _save_conversation_context(self, context: ConversationContext) -> None:
         """Save conversation context to database."""
         try:
@@ -749,6 +757,7 @@ class ConversationalAgent:
             logger.error(f"Failed to save conversation context: {e}")
             # Don't raise error as this is not critical for functionality
     
+    @handle_database_errors("load_conversation_context")
     async def _load_conversation_context(self, session_id: str) -> Optional[ConversationContext]:
         """Load conversation context from database."""
         try:

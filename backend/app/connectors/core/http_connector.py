@@ -11,6 +11,7 @@ from app.connectors.base import BaseConnector
 from app.models.connector import ConnectorResult, ConnectorExecutionContext, AuthRequirements
 from app.models.base import AuthType
 from app.core.exceptions import ConnectorException, ValidationException
+from app.core.error_utils import handle_connector_errors, handle_external_api_errors
 
 
 class HttpConnector(BaseConnector):
@@ -96,6 +97,8 @@ class HttpConnector(BaseConnector):
             "additionalProperties": False
         }
     
+    @handle_connector_errors("HTTP")
+    @handle_external_api_errors("HTTP Request", retryable=True)
     async def execute(self, params: Dict[str, Any], context: ConnectorExecutionContext) -> ConnectorResult:
         """
         Execute HTTP request with the provided parameters.

@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import get_database
 from app.models.connector import ConnectorMetadata
 from app.core.exceptions import RAGError, EmbeddingError
+from app.core.error_utils import handle_external_api_errors, handle_database_errors, log_function_performance
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class EmbeddingService:
             logger.error(f"Failed to initialize embedding service: {e}")
             raise EmbeddingError(f"Failed to initialize embedding service: {e}")
     
+    @handle_external_api_errors("Azure OpenAI Embeddings", retryable=True)
+    @log_function_performance("generate_embedding")
     async def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for the given text."""
         if not self._initialized:
@@ -239,6 +242,8 @@ class RAGRetriever:
         await self.embedding_service.initialize()
         logger.info("RAG retriever initialized successfully")
     
+    @handle_database_errors("retrieve_connectors")
+    @log_function_performance("retrieve_connectors")
     async def retrieve_connectors(
         self, 
         query: str, 

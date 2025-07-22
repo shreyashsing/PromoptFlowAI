@@ -1,8 +1,11 @@
 """
 FastAPI application entry point for PromptFlow AI platform.
 """
-from fastapi import FastAPI
+import time
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import init_database, close_database
 from app.api.auth import router as auth_router
@@ -13,20 +16,73 @@ from app.api.executions import router as executions_router
 from app.services.rag import init_rag_system
 from app.services.conversational_agent import init_conversational_agent
 from app.connectors.core.register import register_core_connectors
-import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Import new error handling and logging systems
+from app.core.logging_config import init_logging, get_logger
+from app.core.error_handler import global_error_handler, handle_api_error
+from app.core.monitoring import health_checker, get_system_status, record_request_time
+from app.core.exceptions import PromptFlowException
+from app.core.middleware import ErrorHandlingMiddleware, RequestLoggingMiddleware, SecurityHeadersMiddleware
+
+# Initialize logging
+init_logging()
+logger = get_logger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    # Startup
+    try:
+        logger.info("Starting PromptFlow AI application...")
+        await init_database()
+        logger.info("Database initialized successfully")
+        
+        # Initialize RAG system
+        await init_rag_system()
+        logger.info("RAG system initialized successfully")
+        
+        # Initialize conversational agent
+        await init_conversational_agent()
+        logger.info("Conversational agent initialized successfully")
+        
+        # Register core connectors
+        registration_result = register_core_connectors()
+        logger.info(f"Core connectors registered: {registration_result['registered']}/{registration_result['total']}")
+        
+        yield
+        
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        raise
+    finally:
+        # Shutdown
+        try:
+            logger.info("Shutting down PromptFlow AI application...")
+            await close_database()
+            logger.info("Database connections closed")
+        except Exception as e:
+            logger.error(f"Shutdown error: {e}")
+
 
 def create_application() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
         title="PromptFlow AI",
         description="No-code AI automation platform",
-        version="1.0.0"
+        version="1.0.0",
+        lifespan=lifespan
     )
 
+    # Add comprehensive middleware stack
+    # Security headers (first)
+    app.add_middleware(SecurityHeadersMiddleware)
+    
+    # Error handling middleware (catches all unhandled exceptions)
+    app.add_middleware(ErrorHandlingMiddleware)
+    
+    # Request logging middleware
+    app.add_middleware(RequestLoggingMiddleware, log_level="INFO")
+    
     # Configure CORS
     app.add_middleware(
         CORSMiddleware,
@@ -35,6 +91,8 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Note: Global exception handling is now handled by ErrorHandlingMiddleware
 
     # Include routers
     app.include_router(auth_router, prefix="/api/v1")
@@ -53,37 +111,27 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup."""
+    """Comprehensive health check endpoint."""
     try:
-        logger.info("Starting PromptFlow AI application...")
-        await init_database()
-        logger.info("Database initialized successfully")
-        
-        # Initialize RAG system
-        await init_rag_system()
-        logger.info("RAG system initialized successfully")
-        
-        # Initialize conversational agent
-        await init_conversational_agent()
-        logger.info("Conversational agent initialized successfully")
-        
-        # Register core connectors
-        registration_result = register_core_connectors()
-        logger.info(f"Core connectors registered: {registration_result['registered']}/{registration_result['total']}")
+        health_status = await health_checker.check_health()
+        return health_status
     except Exception as e:
-        logger.error(f"Startup failed: {e}")
-        raise
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": time.time()
+        }
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on application shutdown."""
+@app.get("/status")
+async def system_status():
+    """Detailed system status endpoint."""
     try:
-        logger.info("Shutting down PromptFlow AI application...")
-        await close_database()
-        logger.info("Database connections closed")
+        return await get_system_status()
     except Exception as e:
-        logger.error(f"Shutdown error: {e}")
+        logger.error(f"System status check failed: {e}")
+        return {
+            "error": "Failed to get system status",
+            "message": str(e),
+            "timestamp": time.time()
+        }
