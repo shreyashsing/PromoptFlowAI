@@ -18,7 +18,7 @@ from croniter import croniter
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from app.models.base import Trigger, WorkflowPlan
+from app.models.base import Trigger, WorkflowPlan, WorkflowNode, WorkflowEdge, WorkflowStatus
 from app.models.execution import ExecutionResult
 from app.core.database import get_supabase_client
 from app.core.exceptions import TriggerException
@@ -903,3 +903,89 @@ class TriggerSystem:
         except Exception as e:
             logger.error(f"Failed to get trigger info: {str(e)}")
             return None, None
+    
+    async def _get_webhook_trigger(self, webhook_id: str) -> Optional[tuple[str, Trigger]]:
+        """Get workflow and trigger for a webhook ID."""
+        try:
+            supabase = get_supabase_client()
+            
+            response = supabase.table("workflows").select("id, triggers").neq("triggers", "[]").execute()
+            
+            if response.data:
+                for workflow_data in response.data:
+                    triggers_data = workflow_data["triggers"] or []
+                    for trigger_data in triggers_data:
+                        trigger = Trigger(**trigger_data)
+                        if (trigger.type == TriggerType.WEBHOOK and 
+                            trigger.config.get("webhook_id") == webhook_id):
+                            return workflow_data["id"], trigger
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get webhook trigger: {str(e)}")
+            return None
+    
+    async def _get_workflow(self, workflow_id: str) -> Optional[WorkflowPlan]:
+        """Get workflow by ID."""
+        try:
+            supabase = get_supabase_client()
+            
+            response = supabase.table("workflows").select("*").eq("id", workflow_id).execute()
+            
+            if response.data:
+                workflow_data = response.data[0]
+                return WorkflowPlan(
+                    id=workflow_data["id"],
+                    user_id=workflow_data["user_id"],
+                    name=workflow_data["name"],
+                    description=workflow_data["description"] or "",
+                    nodes=[WorkflowNode(**node) for node in workflow_data["nodes"]],
+                    edges=[WorkflowEdge(**edge) for edge in workflow_data["edges"]],
+                    triggers=[Trigger(**trigger) for trigger in workflow_data["triggers"]],
+                    status=WorkflowStatus(workflow_data["status"]),
+                    created_at=datetime.fromisoformat(workflow_data["created_at"]),
+                    updated_at=datetime.fromisoformat(workflow_data["updated_at"])
+                )
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get workflow: {str(e)}")
+            return None
+    
+    async def _store_trigger_execution(self, trigger_execution: TriggerExecution):
+        """Store trigger execution record in database."""
+        try:
+            supabase = get_supabase_client()
+            
+            execution_data = {
+                "workflow_id": trigger_execution.workflow_id,
+                "trigger_id": trigger_execution.trigger_id,
+                "trigger_type": trigger_execution.trigger_type,
+                "trigger_data": trigger_execution.trigger_data,
+                "status": trigger_execution.status,
+                "started_at": trigger_execution.started_at.isoformat(),
+                "completed_at": trigger_execution.completed_at.isoformat() if trigger_execution.completed_at else None,
+                "error_message": trigger_execution.error
+            }
+            
+            response = supabase.table("trigger_executions").insert(execution_data).execute()
+            
+            if not response.data:
+                logger.error("Failed to store trigger execution")
+            
+        except Exception as e:
+            logger.error(f"Failed to store trigger execution: {str(e)}")
+
+
+# Global trigger system instance
+trigger_system_instance = None
+
+async def get_trigger_system() -> TriggerSystem:
+    """Get the global trigger system instance."""
+    global trigger_system_instance
+    if trigger_system_instance is None:
+        trigger_system_instance = TriggerSystem()
+        await trigger_system_instance.start()
+    return trigger_system_instance

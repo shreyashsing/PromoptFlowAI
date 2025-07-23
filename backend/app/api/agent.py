@@ -74,7 +74,7 @@ async def run_agent(
     intent, and either generate a workflow plan or ask for clarification.
     """
     start_time = time.time()
-    user_id = current_user["id"]
+    user_id = current_user["user_id"]
     
     async with ErrorBoundary(
         operation="run_agent",
@@ -132,7 +132,7 @@ async def chat_agent(
     - Ask questions about the planning process
     """
     start_time = time.time()
-    user_id = current_user["id"]
+    user_id = current_user["user_id"]
     
     async with ErrorBoundary(
         operation="chat_agent",
@@ -274,13 +274,13 @@ async def get_conversation(
             )
         
         # Verify user owns this conversation
-        if context.user_id != current_user["id"]:
+        if context.user_id != current_user["user_id"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this conversation"
             )
         
-        logger.info(f"Retrieved conversation {session_id} for user {current_user['id']}")
+        logger.info(f"Retrieved conversation {session_id} for user {current_user['user_id']}")
         
         return {
             "session_id": context.session_id,
@@ -318,7 +318,7 @@ async def list_conversations(
         from app.core.database import get_database
         
         db = await get_database()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Get conversations for the user
         result = db.table("conversations").select(
@@ -366,7 +366,7 @@ async def delete_conversation(
         from app.core.database import get_database
         
         db = await get_database()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Verify conversation exists and belongs to user
         result = db.table("conversations").select("user_id").eq("session_id", session_id).execute()

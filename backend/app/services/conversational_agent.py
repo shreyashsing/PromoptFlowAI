@@ -378,7 +378,7 @@ class ConversationalAgent:
             connectors = await self.rag_retriever.retrieve_connectors(
                 query=prompt,
                 limit=15,
-                similarity_threshold=0.6
+                similarity_threshold=0.3
             )
             
             if not connectors:
@@ -727,6 +727,16 @@ class ConversationalAgent:
             logger.error(f"Failed to explain plan changes: {e}")
             return "I've updated the workflow plan based on your request."    
 
+    def _serialize_workflow_plan(self, plan: WorkflowPlan) -> Dict[str, Any]:
+        """Serialize WorkflowPlan to JSON-compatible dict with datetime handling."""
+        plan_dict = plan.dict()
+        # Convert datetime objects to ISO format strings
+        if 'created_at' in plan_dict:
+            plan_dict['created_at'] = plan_dict['created_at'].isoformat()
+        if 'updated_at' in plan_dict:
+            plan_dict['updated_at'] = plan_dict['updated_at'].isoformat()
+        return plan_dict
+
     # Database and persistence methods
     
     @handle_database_errors("save_conversation_context")
@@ -738,18 +748,64 @@ class ConversationalAgent:
             context_data = {
                 "session_id": context.session_id,
                 "user_id": context.user_id,
-                "messages": [msg.dict() for msg in context.messages],
-                "current_plan": context.current_plan.dict() if context.current_plan else None,
+                "messages": [
+                    {
+                        "id": msg.id,
+                        "role": msg.role,
+                        "content": msg.content,
+                        "timestamp": msg.timestamp.isoformat(),
+                        "metadata": msg.metadata
+                    } for msg in context.messages
+                ],
+                "current_plan": self._serialize_workflow_plan(context.current_plan) if context.current_plan else None,
                 "state": context.state.value,
                 "created_at": context.created_at.isoformat(),
                 "updated_at": context.updated_at.isoformat()
             }
             
-            # Upsert conversation context
-            db.table("conversations").upsert(
-                context_data,
-                on_conflict="session_id"
-            ).execute()
+            # First check if the conversation exists
+            existing = db.table('conversations').select('id').eq('user_id', context.user_id).eq('session_id', context.session_id).execute()
+            
+            # Generate a title from the first message if available
+            title = "New Conversation"
+            if context.messages:
+                first_message = context.messages[0].content[:50] + "..." if len(context.messages[0].content) > 50 else context.messages[0].content
+                title = first_message
+            
+            # Create metadata from context
+            metadata = {
+                'state': context.state.value,
+                'message_count': len(context.messages),
+                'has_plan': context.current_plan is not None
+            }
+            
+            # Prepare the full conversation data
+            conversation_data = {
+                'user_id': context.user_id,
+                'session_id': context.session_id,
+                'title': title,
+                'messages': [
+                    {
+                        'id': msg.id,
+                        'role': msg.role,
+                        'content': msg.content,
+                        'timestamp': msg.timestamp.isoformat(),
+                        'metadata': msg.metadata
+                    } for msg in context.messages
+                ],
+                'current_plan': self._serialize_workflow_plan(context.current_plan) if context.current_plan else None,
+                'state': context.state.value,
+                'metadata': metadata,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            if existing.data and len(existing.data) > 0:
+                # Update existing conversation
+                db.table('conversations').update(conversation_data).eq('user_id', context.user_id).eq('session_id', context.session_id).execute()
+            else:
+                # Insert new conversation
+                conversation_data['created_at'] = datetime.now().isoformat()
+                db.table('conversations').insert(conversation_data).execute()
             
             logger.debug(f"Saved conversation context for session {context.session_id}")
             
@@ -771,12 +827,23 @@ class ConversationalAgent:
             data = result.data[0]
             
             # Reconstruct messages
-            messages = [ChatMessage(**msg) for msg in data["messages"]]
+            messages = []
+            for msg_data in data["messages"]:
+                msg_data_copy = msg_data.copy()
+                if isinstance(msg_data_copy["timestamp"], str):
+                    msg_data_copy["timestamp"] = datetime.fromisoformat(msg_data_copy["timestamp"])
+                messages.append(ChatMessage(**msg_data_copy))
             
             # Reconstruct current plan if exists
             current_plan = None
             if data["current_plan"]:
-                current_plan = WorkflowPlan(**data["current_plan"])
+                plan_data = data["current_plan"].copy()
+                # Convert datetime strings back to datetime objects
+                if 'created_at' in plan_data and isinstance(plan_data['created_at'], str):
+                    plan_data['created_at'] = datetime.fromisoformat(plan_data['created_at'])
+                if 'updated_at' in plan_data and isinstance(plan_data['updated_at'], str):
+                    plan_data['updated_at'] = datetime.fromisoformat(plan_data['updated_at'])
+                current_plan = WorkflowPlan(**plan_data)
             
             return ConversationContext(
                 session_id=data["session_id"],

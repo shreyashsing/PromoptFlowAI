@@ -81,7 +81,7 @@ venv/
 ENV/
 env/
 .env
-
+.next
 # Jupyter Notebook #
 ###################
 .ipynb_checkpoints

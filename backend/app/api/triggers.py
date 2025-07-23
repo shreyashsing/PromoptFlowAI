@@ -13,15 +13,11 @@ from datetime import datetime
 
 from app.core.auth import get_current_user
 from app.models.base import Trigger
-from app.services.trigger_system import TriggerSystem, TriggerType
+from app.services.trigger_system import get_trigger_system, TriggerType
 from app.core.exceptions import TriggerException
 
 
 router = APIRouter(prefix="/api/triggers", tags=["triggers"])
-
-# Global trigger system instance
-trigger_system = TriggerSystem()
-
 
 class CreateTriggerRequest(BaseModel):
     """Request model for creating a trigger."""
@@ -62,18 +58,6 @@ class WebhookResponse(BaseModel):
     message: str
 
 
-@router.on_event("startup")
-async def startup_trigger_system():
-    """Start the trigger system on application startup."""
-    await trigger_system.start()
-
-
-@router.on_event("shutdown")
-async def shutdown_trigger_system():
-    """Stop the trigger system on application shutdown."""
-    await trigger_system.stop()
-
-
 @router.post("/create", response_model=TriggerResponse)
 async def create_trigger(
     request: CreateTriggerRequest,
@@ -97,7 +81,8 @@ async def create_trigger(
                 detail=f"Invalid trigger type: {request.trigger_type}"
             )
         
-        # Create trigger
+        # Get trigger system and create trigger
+        trigger_system = await get_trigger_system()
         trigger = await trigger_system.create_trigger(
             workflow_id=request.workflow_id,
             user_id=current_user["id"],
@@ -140,7 +125,8 @@ async def update_trigger(
         Updated trigger information
     """
     try:
-        # Update trigger
+        # Get trigger system and update trigger
+        trigger_system = await get_trigger_system()
         trigger = await trigger_system.update_trigger(
             workflow_id=workflow_id,
             trigger_id=trigger_id,
@@ -180,6 +166,7 @@ async def delete_trigger(
         Success message
     """
     try:
+        trigger_system = await get_trigger_system()
         await trigger_system.delete_trigger(workflow_id, trigger_id)
         return {"message": "Trigger deleted successfully"}
         
@@ -207,6 +194,7 @@ async def enable_trigger(
         Success message
     """
     try:
+        trigger_system = await get_trigger_system()
         await trigger_system.enable_trigger(workflow_id, trigger_id)
         return {"message": "Trigger enabled successfully"}
         
@@ -234,6 +222,7 @@ async def disable_trigger(
         Success message
     """
     try:
+        trigger_system = await get_trigger_system()
         await trigger_system.disable_trigger(workflow_id, trigger_id)
         return {"message": "Trigger disabled successfully"}
         
@@ -259,6 +248,7 @@ async def get_trigger_status(
         Trigger status information
     """
     try:
+        trigger_system = await get_trigger_system()
         status = await trigger_system.get_trigger_status(trigger_id)
         
         return TriggerStatusResponse(
@@ -296,7 +286,8 @@ async def process_webhook(
         payload = await request.json() if request.headers.get("content-type") == "application/json" else {}
         headers = dict(request.headers)
         
-        # Process webhook
+        # Get trigger system and process webhook
+        trigger_system = await get_trigger_system()
         result = await trigger_system.process_webhook(
             webhook_id=webhook_id,
             payload=payload,

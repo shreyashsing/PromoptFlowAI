@@ -345,7 +345,7 @@ class RAGRetriever:
         query: str, 
         limit: int = 10,
         category_filter: Optional[str] = None,
-        similarity_threshold: float = 0.7
+        similarity_threshold: float = 0.3
     ) -> List[ConnectorMetadata]:
         """
         Retrieve relevant connectors based on semantic similarity.

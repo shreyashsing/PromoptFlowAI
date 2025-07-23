@@ -13,8 +13,10 @@ from app.api.rag import router as rag_router
 from app.api.agent import router as agent_router
 from app.api.workflows import router as workflows_router
 from app.api.executions import router as executions_router
+from app.api.triggers import router as triggers_router
 from app.services.rag import init_rag_system
 from app.services.conversational_agent import init_conversational_agent
+from app.services.trigger_system import get_trigger_system
 from app.connectors.core.register import register_core_connectors
 
 # Import new error handling and logging systems
@@ -49,7 +51,15 @@ async def lifespan(app: FastAPI):
         registration_result = register_core_connectors()
         logger.info(f"Core connectors registered: {registration_result['registered']}/{registration_result['total']}")
         
+        # Initialize trigger system
+        trigger_system = await get_trigger_system()
+        logger.info("Trigger system initialized successfully")
+        
         yield
+        
+        # Shutdown trigger system
+        await trigger_system.stop()
+        logger.info("Trigger system stopped")
         
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -100,6 +110,7 @@ def create_application() -> FastAPI:
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(executions_router, prefix="/api/v1")
+    app.include_router(triggers_router, prefix="/api/v1")
 
     return app
 
