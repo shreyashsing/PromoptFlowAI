@@ -97,7 +97,7 @@ async def create_workflow(
     edges, and triggers. The workflow is initially created in DRAFT status.
     """
     start_time = time.time()
-    user_id = current_user["id"]
+    user_id = current_user["user_id"]
     
     async with ErrorBoundary(
         operation="create_workflow",
@@ -193,7 +193,7 @@ async def list_workflows(
     """
     try:
         supabase = get_supabase_client()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Build query
         query = supabase.table("workflows").select("*").eq("user_id", user_id)
@@ -251,7 +251,7 @@ async def get_workflow(
     """
     try:
         supabase = get_supabase_client()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Get workflow from database
         response = supabase.table("workflows").select("*").eq("id", workflow_id).eq("user_id", user_id).execute()
@@ -306,7 +306,7 @@ async def update_workflow(
     """
     try:
         supabase = get_supabase_client()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Get existing workflow
         response = supabase.table("workflows").select("*").eq("id", workflow_id).eq("user_id", user_id).execute()
@@ -387,7 +387,7 @@ async def delete_workflow(
     """
     try:
         supabase = get_supabase_client()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Verify workflow exists and belongs to user
         response = supabase.table("workflows").select("id").eq("id", workflow_id).eq("user_id", user_id).execute()
@@ -438,7 +438,7 @@ async def execute_workflow(
     """
     try:
         supabase = get_supabase_client()
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Get workflow from database
         response = supabase.table("workflows").select("*").eq("id", workflow_id).eq("user_id", user_id).execute()
@@ -507,7 +507,7 @@ async def list_workflow_executions(
     This endpoint returns execution history for a workflow with pagination.
     """
     try:
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Verify workflow exists and belongs to user
         supabase = get_supabase_client()
@@ -569,7 +569,7 @@ async def get_workflow_stats(
     average duration, and status counts.
     """
     try:
-        user_id = current_user["id"]
+        user_id = current_user["user_id"]
         
         # Verify workflow exists and belongs to user
         supabase = get_supabase_client()

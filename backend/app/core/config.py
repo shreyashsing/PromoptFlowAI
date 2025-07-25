@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     
     # Database settings
     SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
+    SUPABASE_KEY: str = ""  # Anon key for client-side operations
+    SUPABASE_SERVICE_ROLE_KEY: str = ""  # Service role key for backend operations
     
     # AI service settings
     AZURE_OPENAI_ENDPOINT: str = ""
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     # Security settings
     SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    
+    # OAuth settings
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
     
     # Logging settings
     LOG_LEVEL: str = "INFO"

@@ -25,6 +25,9 @@ class GmailConnector(BaseConnector):
     through the Gmail API.
     """
     
+    def _get_connector_name(self) -> str:
+        return "gmail_connector"
+    
     def _get_category(self) -> str:
         return "communication"
     

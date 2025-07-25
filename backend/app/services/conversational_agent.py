@@ -304,6 +304,11 @@ class ConversationalAgent:
                 # Save the approved plan to database
                 await self._save_workflow_plan(request.plan)
                 
+                # Workflow is ready for manual execution
+                response += f"\n\n✅ **Workflow Ready!**\n"
+                response += f"Configure authentication for each connector, then click 'Execute' to run the workflow."
+                
+                return response
             else:
                 # Plan rejected, return to planning state
                 context.state = ConversationState.PLANNING
@@ -406,7 +411,78 @@ class ConversationalAgent:
                     Available Connectors:
                     {json.dumps(connector_info, indent=2)}
                     
-                    Please generate a workflow plan that accomplishes the user's request using the available connectors.
+                    CRITICAL PARAMETER REQUIREMENTS:
+                    You MUST populate ALL required parameters for each connector based on the user's request. Do NOT leave parameters empty or use placeholders.
+                    
+                    EXACT PARAMETER REQUIREMENTS (DO NOT DEVIATE):
+                    
+                    For perplexity_search - MUST include ALL these parameters:
+                    {{
+                        "action": "search",
+                        "query": "your search query here",
+                        "model": "llama-3.1-sonar-small-128k-online"
+                    }}
+                    
+                    For text_summarizer - MUST include ALL these parameters:
+                    {{
+                        "text": "{{perplexity_search.result}}",
+                        "max_length": 100,
+                        "style": "concise"
+                    }}
+                    VALID style values ONLY: "concise", "detailed", "bullet_points"
+                    
+                    For gmail_connector - MUST include ALL these parameters:
+                    {{
+                        "action": "send",
+                        "to": "recipient@email.com",
+                        "subject": "your subject here",
+                        "body": "{{text_summarizer.result}}"
+                    }}
+                    
+                    DO NOT use any other parameter names or values not listed above.
+                    
+                    PARAMETER CHAINING:
+                    Use {{previous_connector_name.result}} to chain outputs between connectors.
+                    
+                    COMPLETE WORKFLOW EXAMPLE (COPY THIS STRUCTURE EXACTLY):
+                    {{
+                        "name": "Workflow Name",
+                        "description": "Workflow description",
+                        "nodes": [
+                            {{
+                                "connector_name": "perplexity_search",
+                                "parameters": {{
+                                    "action": "search",
+                                    "query": "Find the top 5 recent blogs posted by Google",
+                                    "model": "llama-3.1-sonar-small-128k-online"
+                                }},
+                                "dependencies": []
+                            }},
+                            {{
+                                "connector_name": "text_summarizer",
+                                "parameters": {{
+                                    "text": "{{perplexity_search.result}}",
+                                    "max_length": 100,
+                                    "style": "concise"
+                                }},
+                                "dependencies": ["perplexity_search"]
+                            }},
+                            {{
+                                "connector_name": "gmail_connector",
+                                "parameters": {{
+                                    "action": "send",
+                                    "to": "shreyashbarca10@gmail.com",
+                                    "subject": "Google Blog Summary",
+                                    "body": "{{text_summarizer.result}}"
+                                }},
+                                "dependencies": ["text_summarizer"]
+                            }}
+                        ]
+                    }}
+                    
+                    CRITICAL: Use ONLY the parameter names and values shown above. Do not add extra parameters.
+                    
+                    Generate a complete workflow plan with ALL parameters properly filled based on the user's specific request.
                     """
                 }
             ]
@@ -426,6 +502,12 @@ class ConversationalAgent:
             # Parse function call result
             function_call = response.choices[0].message.function_call
             plan_data = json.loads(function_call.arguments)
+            
+            # Debug: Log the generated plan data
+            logger.info(f"AI generated workflow plan: {json.dumps(plan_data, indent=2)}")
+            
+            # Validate and fix parameters before creating workflow
+            plan_data = self._validate_and_fix_parameters(plan_data)
             
             # Create WorkflowPlan object
             workflow_plan = self._create_workflow_plan_from_data(
@@ -568,11 +650,17 @@ class ConversationalAgent:
                 # Save the approved plan
                 await self._save_workflow_plan(context.current_plan)
                 
-                return (
+                response = (
                     f"Excellent! I've approved your workflow '{context.current_plan.name}'. "
                     f"The workflow is now active and ready for execution. "
                     f"You can run it manually or set up triggers for automatic execution."
                 )
+                
+                # Workflow is ready for manual execution
+                response += f"\n\n✅ **Workflow Ready!**\n"
+                response += f"Configure authentication for each connector, then click 'Execute' to run the workflow."
+                
+                return response
             else:
                 return "I don't have a current plan to approve. Let's start over with your workflow request."
         
@@ -745,6 +833,18 @@ class ConversationalAgent:
         try:
             db = await get_database()
             
+            # Test database connection before proceeding
+            try:
+                # Simple test query to verify connection and permissions
+                test_result = db.table('conversations').select('id').limit(1).execute()
+                logger.info(f"Database connection test successful for conversation save (user: {context.user_id})")
+            except Exception as test_e:
+                logger.error(f"Database connection test failed: {test_e}")
+                return  # Exit early if we can't even query
+            
+            # Ensure user exists (especially for development user)
+            await self._ensure_user_exists(context.user_id, db)
+            
             context_data = {
                 "session_id": context.session_id,
                 "user_id": context.user_id,
@@ -811,6 +911,10 @@ class ConversationalAgent:
             
         except Exception as e:
             logger.error(f"Failed to save conversation context: {e}")
+            logger.error(f"Context details: user_id={context.user_id}, session_id={context.session_id}, messages_count={len(context.messages)}")
+            # For debugging: Let's make this error more visible
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             # Don't raise error as this is not critical for functionality
     
     @handle_database_errors("load_conversation_context")
@@ -819,12 +923,27 @@ class ConversationalAgent:
         try:
             db = await get_database()
             
+            # Add debugging to see what's happening
+            logger.info(f"Attempting to load conversation: {session_id}")
+            
             result = db.table("conversations").select("*").eq("session_id", session_id).execute()
             
+            logger.info(f"Load query result: found {len(result.data) if result.data else 0} conversations")
+            
             if not result.data:
+                # Additional debugging - try to see if conversation exists at all
+                try:
+                    debug_result = db.table("conversations").select("session_id, user_id").eq("session_id", session_id).execute()
+                    if debug_result.data:
+                        logger.warning(f"Conversation exists but not accessible: session={session_id}, user_id={debug_result.data[0].get('user_id')}")
+                    else:
+                        logger.info(f"Conversation truly not found: {session_id}")
+                except Exception as debug_e:
+                    logger.error(f"Debug query failed: {debug_e}")
                 return None
             
             data = result.data[0]
+            logger.info(f"Successfully loaded conversation: {session_id} for user {data.get('user_id')}")
             
             # Reconstruct messages
             messages = []
@@ -859,10 +978,52 @@ class ConversationalAgent:
             logger.error(f"Failed to load conversation context: {e}")
             return None
     
+    async def _ensure_user_exists(self, user_id: str, db) -> None:
+        """Ensure user exists in database, create if missing (especially for development user)."""
+        try:
+            # Check if user exists
+            result = db.table('users').select('id').eq('id', user_id).execute()
+            
+            if not result.data:
+                # User doesn't exist, create them
+                if user_id == "00000000-0000-0000-0000-000000000001":
+                    # Development user
+                    user_data = {
+                        "id": user_id,
+                        "email": "dev@test.com",
+                        "full_name": "Development User",
+                        "avatar_url": None,
+                        "preferences": {},
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    db.table('users').insert(user_data).execute()
+                    logger.info(f"Created development user profile: {user_id}")
+                else:
+                    # Regular user - this shouldn't happen in normal flow but create basic profile
+                    user_data = {
+                        "id": user_id,
+                        "email": f"user-{user_id}@example.com",
+                        "full_name": "User",
+                        "avatar_url": None,
+                        "preferences": {},
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    db.table('users').insert(user_data).execute()
+                    logger.warning(f"Created missing user profile: {user_id}")
+                    
+        except Exception as e:
+            logger.warning(f"Failed to ensure user exists: {e}")
+            # Don't raise error as this is not critical for functionality
+
     async def _save_workflow_plan(self, plan: WorkflowPlan) -> None:
         """Save workflow plan to database."""
         try:
             db = await get_database()
+            
+            # Ensure user exists before saving workflow
+            await self._ensure_user_exists(plan.user_id, db)
             
             plan_data = {
                 "id": plan.id,
@@ -908,19 +1069,29 @@ class ConversationalAgent:
             )
             nodes.append(node)
         
+        # Create a mapping of connector names to node IDs for dependency resolution
+        connector_to_node = {node.connector_name: node.id for node in nodes}
+        
+        # Update node dependencies to use node IDs instead of connector names
+        for node in nodes:
+            resolved_dependencies = []
+            for dep_name in node.dependencies:
+                if dep_name in connector_to_node:
+                    resolved_dependencies.append(connector_to_node[dep_name])
+                else:
+                    logger.warning(f"Dependency '{dep_name}' not found for node {node.id}")
+            node.dependencies = resolved_dependencies
+        
         # Create edges based on dependencies
         edges = []
         for node in nodes:
-            for dep_name in node.dependencies:
-                # Find dependency node
-                dep_node = next((n for n in nodes if n.connector_name == dep_name), None)
-                if dep_node:
-                    edge = WorkflowEdge(
-                        id=str(uuid.uuid4()),
-                        source=dep_node.id,
-                        target=node.id
-                    )
-                    edges.append(edge)
+            for dep_node_id in node.dependencies:
+                edge = WorkflowEdge(
+                    id=str(uuid.uuid4()),
+                    source=dep_node_id,
+                    target=node.id
+                )
+                edges.append(edge)
         
         # Create triggers if specified
         triggers = []
@@ -995,6 +1166,62 @@ class ConversationalAgent:
         user_messages = [msg.content for msg in context.messages if msg.role == "user"]
         return " ".join(user_messages)
     
+    def _validate_and_fix_parameters(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and fix AI-generated parameters to match connector schemas."""
+        fixed_nodes = []
+        
+        for node in plan_data.get("nodes", []):
+            connector_name = node.get("connector_name")
+            parameters = node.get("parameters", {})
+            
+            # Fix parameters based on connector type
+            if connector_name == "perplexity_search":
+                # Ensure required parameters are present
+                fixed_params = {
+                    "action": parameters.get("action", "search"),
+                    "query": parameters.get("query", ""),
+                    "model": parameters.get("model", "llama-3.1-sonar-small-128k-online")
+                }
+                parameters = fixed_params
+                
+            elif connector_name == "text_summarizer":
+                # Fix style parameter to valid values
+                style = parameters.get("style", "concise")
+                if style not in ["concise", "detailed", "bullet_points"]:
+                    style = "concise"
+                
+                # Ensure max_length is a number
+                max_length = parameters.get("max_length", 100)
+                if isinstance(max_length, str):
+                    max_length = 100
+                
+                fixed_params = {
+                    "text": parameters.get("text", ""),
+                    "max_length": max_length,
+                    "style": style
+                }
+                parameters = fixed_params
+                
+            elif connector_name == "gmail_connector":
+                # Ensure required parameters are present
+                fixed_params = {
+                    "action": parameters.get("action", "send"),
+                    "to": parameters.get("to", ""),
+                    "subject": parameters.get("subject", ""),
+                    "body": parameters.get("body", "")
+                }
+                parameters = fixed_params
+            
+            # Update node with fixed parameters
+            fixed_node = {**node, "parameters": parameters}
+            fixed_nodes.append(fixed_node)
+        
+        # Update plan data with fixed nodes
+        plan_data["nodes"] = fixed_nodes
+        logger.info(f"Fixed workflow parameters: {json.dumps(plan_data, indent=2)}")
+        
+        return plan_data
+    
     def _get_workflow_planning_function(self) -> Dict[str, Any]:
         """Get function definition for workflow planning."""
         return {
@@ -1030,7 +1257,7 @@ class ConversationalAgent:
                                     "description": "List of connector names this node depends on"
                                 }
                             },
-                            "required": ["connector_name"]
+                            "required": ["connector_name", "parameters"]
                         }
                     },
                     "triggers": {
@@ -1106,22 +1333,33 @@ Example response:
         return """
 You are an AI workflow planner for PromptFlow AI. Your task is to create detailed, executable workflow plans based on user requests and available connectors.
 
+CRITICAL: Each connector node MUST include ALL required parameters from its schema. Check the "required" field in each connector's parameter schema and ensure all required parameters are provided with appropriate values.
+
 Guidelines:
 1. Analyze the user's request to understand their automation goals
 2. Select the most appropriate connectors from the available list
 3. Design a logical flow that accomplishes the user's objectives
-4. Consider dependencies between steps
-5. Include appropriate error handling and validation
-6. Suggest reasonable default parameters
-7. Explain your reasoning for the design choices
+4. **ALWAYS include ALL required parameters for each connector**
+5. Use realistic parameter values based on the user's request
+6. Consider dependencies between steps and data flow
+7. Include appropriate error handling and validation
+8. Explain your reasoning for the design choices
 
 When creating the workflow plan:
 - Use only connectors from the provided list
+- Check each connector's parameter schema for required fields
+- Provide realistic values for all required parameters
+- Use parameter references (${previous_node.field}) for data flow between nodes
 - Ensure proper sequencing of operations
-- Include necessary authentication steps
-- Consider data flow between connectors
+- Include necessary authentication steps where needed
 - Add appropriate triggers if mentioned
 - Keep the plan focused and efficient
+
+PARAMETER EXAMPLES:
+- For perplexity_search: MUST include "action" (e.g., "search") and "query"
+- For text_summarizer: MUST include "text" parameter
+- For gmail_connector: MUST include "action" and "to" (for send action)
+- For google_sheets: MUST include "action" and appropriate parameters for that action
 
 The workflow should be practical, executable, and aligned with the user's stated goals.
 Use the generate_workflow_plan function to provide a structured response.

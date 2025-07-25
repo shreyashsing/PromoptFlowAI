@@ -3,7 +3,7 @@ Authentication utilities using Supabase Auth.
 """
 import jwt
 from typing import Optional, Dict, Any
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import Client
 from app.core.database import get_database
@@ -187,66 +187,64 @@ async def get_auth_service(db: Client = Depends(get_database)) -> AuthService:
     return AuthService(db)
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    auth_service: AuthService = Depends(get_auth_service)
-) -> Dict[str, Any]:
-    """Dependency to get current authenticated user."""
-    
-    # Development bypass - check for test token
-    if credentials.credentials == "dev-test-token":
-        return {
-            "id": "dev-user-123",
-            "user_id": "dev-user-123", 
-            "email": "dev@test.com",
-            "profile": {
-                "id": "dev-user-123",
-                "email": "dev@test.com",
-                "full_name": "Development User"
-            }
-        }
-    
+async def get_current_user(authorization: str = Header(...)) -> Dict[str, Any]:
+    """
+    Dependency to get current user from JWT token.
+    Supports both real Supabase JWT tokens and development token.
+    """
     try:
-        token = credentials.credentials
-        user_data = await auth_service.verify_token(token)
+        logger.info(f"Authentication attempt with header: {authorization[:20]}...")
         
-        # Get or create user profile with fallback handling
-        profile = await auth_service.get_user_profile(user_data["user_id"])
-        if not profile:
+        if not authorization.startswith("Bearer "):
+            logger.warning("Invalid authorization header format")
+            raise AuthenticationError("Invalid authorization header")
+        
+        token = authorization.split(" ")[1]
+        logger.info(f"Extracted token: {token[:20]}...")
+        
+        # Handle development token
+        if token == "dev-test-token":
+            logger.info("Using development token")
+            user_data = {
+                "user_id": "00000000-0000-0000-0000-000000000001",
+                "email": "dev@test.com",
+                "user_metadata": {}
+            }
+            
+            # Ensure development user exists in database
+            from app.core.database import get_supabase_client
+            db_client = get_supabase_client()
+            auth_service = AuthService(db_client)
             try:
-                profile = await auth_service.create_or_update_user_profile(user_data)
-            except Exception as profile_error:
-                logger.warning(f"Could not create user profile, using fallback: {profile_error}")
-                # Create a fallback profile that doesn't require database insertion
-                now = datetime.now()
-                profile = UserProfile(
-                    id=user_data["user_id"],
-                    email=user_data["email"],
-                    full_name=user_data.get("user_metadata", {}).get("full_name"),
-                    avatar_url=user_data.get("user_metadata", {}).get("avatar_url"),
-                    preferences=user_data.get("user_metadata", {}).get("preferences", {}),
-                    created_at=now,
-                    updated_at=now
-                )
+                await auth_service.create_or_update_user_profile(user_data)
+                logger.info("Created development user profile: 00000000-0000-0000-0000-000000000001")
+            except Exception as e:
+                logger.error(f"Failed to create/update user profile: {e}")
+                # Continue anyway for development
+            
+            return user_data
         
-        return {
-            "user_id": user_data["user_id"],
-            "email": user_data["email"],
-            "profile": profile
-        }
+        # Handle real Supabase JWT token
+        logger.info("Attempting to verify real Supabase JWT token")
+        from app.core.database import get_supabase_client
+        db_client = get_supabase_client()
+        auth_service = AuthService(db_client)
+        user_data = await auth_service.verify_token(token)
+        logger.info(f"Successfully verified JWT for user: {user_data.get('user_id', 'UNKNOWN')}")
         
-    except AuthenticationError:
+        return user_data
+        
+    except AuthenticationError as e:
+        logger.warning(f"Authentication failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Authentication failed"
         )
     except Exception as e:
-        logger.error(f"Authentication error: {e}")
+        logger.error(f"Unexpected authentication error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Authentication failed"
         )
 
 

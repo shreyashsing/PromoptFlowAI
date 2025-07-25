@@ -22,6 +22,9 @@ class HttpConnector(BaseConnector):
     with comprehensive authentication, headers, query parameters, and error handling.
     """
     
+    def _get_connector_name(self) -> str:
+        return "http_request"
+    
     def _get_category(self) -> str:
         return "data_sources"
     

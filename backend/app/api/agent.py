@@ -60,6 +60,70 @@ class PlanModificationResponse(BaseModel):
 
 # API Endpoints
 
+@router.get("/conversations/{session_id}", response_model=Dict[str, Any])
+async def get_conversation(
+    session_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
+):
+    """
+    Load conversation context by session ID.
+    
+    This endpoint retrieves the conversation history, current workflow plan,
+    and conversation state for a given session.
+    """
+    try:
+        logger.info(f"GET conversation request for session: {session_id}, user: {current_user.get('user_id', 'UNKNOWN')}")
+        
+        # Load conversation context from database
+        context = await agent._load_conversation_context(session_id)
+        
+        if not context:
+            logger.warning(f"Conversation not found in database: {session_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation {session_id} not found"
+            )
+        
+        # Verify the conversation belongs to the current user
+        if context.user_id != current_user["user_id"]:
+            logger.warning(f"Access denied: conversation {session_id} belongs to {context.user_id}, not {current_user['user_id']}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this conversation"
+            )
+        
+        logger.info(f"Successfully retrieved conversation: {session_id} for user {current_user['user_id']}")
+        
+        # Convert to response format
+        return {
+            "session_id": context.session_id,
+            "user_id": context.user_id,
+            "messages": [
+                {
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "metadata": msg.metadata
+                } for msg in context.messages
+            ],
+            "current_plan": context.current_plan.dict() if context.current_plan else None,
+            "state": context.state.value,
+            "created_at": context.created_at.isoformat(),
+            "updated_at": context.updated_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading conversation {session_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load conversation"
+        )
+
+
 @router.post("/run-agent", response_model=AgentResponse)
 async def run_agent(
     request: PromptRequest,
@@ -248,57 +312,6 @@ async def confirm_plan(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during plan confirmation"
-        )
-
-
-@router.get("/conversation/{session_id}", response_model=Dict[str, Any])
-async def get_conversation(
-    session_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
-):
-    """
-    Retrieve conversation context and history.
-    
-    This endpoint allows clients to retrieve the current state of a conversation,
-    including message history, current plan, and conversation state.
-    """
-    try:
-        # Load conversation context
-        context = await agent._load_conversation_context(session_id)
-        
-        if not context:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Conversation {session_id} not found"
-            )
-        
-        # Verify user owns this conversation
-        if context.user_id != current_user["user_id"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this conversation"
-            )
-        
-        logger.info(f"Retrieved conversation {session_id} for user {current_user['user_id']}")
-        
-        return {
-            "session_id": context.session_id,
-            "user_id": context.user_id,
-            "messages": [msg.dict() for msg in context.messages],
-            "current_plan": context.current_plan.dict() if context.current_plan else None,
-            "state": context.state.value,
-            "created_at": context.created_at.isoformat(),
-            "updated_at": context.updated_at.isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in get_conversation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error retrieving conversation"
         )
 
 

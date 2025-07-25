@@ -89,7 +89,7 @@ async def get_execution_status(
             raise HTTPException(status_code=404, detail="Execution not found")
         
         # Verify user authorization
-        if execution_result.user_id != current_user["id"]:
+        if execution_result.user_id != current_user["user_id"]:
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Convert node results to response format
@@ -146,7 +146,7 @@ async def list_workflow_executions(
     try:
         executions = await orchestrator.list_workflow_executions(
             workflow_id=workflow_id,
-            user_id=current_user["id"],
+            user_id=current_user["user_id"],
             limit=limit,
             offset=offset
         )
@@ -194,7 +194,7 @@ async def get_workflow_execution_stats(
     try:
         stats = await orchestrator.get_workflow_execution_stats(
             workflow_id=workflow_id,
-            user_id=current_user["id"]
+            user_id=current_user["user_id"]
         )
         
         return ExecutionStatsResponse(**stats)
@@ -221,7 +221,7 @@ async def cancel_execution(
     try:
         success = await orchestrator.cancel_execution(
             execution_id=execution_id,
-            user_id=current_user["id"]
+            user_id=current_user["user_id"]
         )
         
         if not success:
@@ -260,7 +260,7 @@ async def get_execution_node_details(
             raise HTTPException(status_code=404, detail="Execution not found")
         
         # Verify user authorization
-        if execution_result.user_id != current_user["id"]:
+        if execution_result.user_id != current_user["user_id"]:
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Convert node results to response format
@@ -307,7 +307,7 @@ async def get_execution_logs(
             raise HTTPException(status_code=404, detail="Execution not found")
         
         # Verify user authorization
-        if execution_result.user_id != current_user["id"]:
+        if execution_result.user_id != current_user["user_id"]:
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Build detailed log structure

@@ -19,6 +19,9 @@ class GoogleSheetsConnector(BaseConnector):
     in Google Sheets, as well as managing sheets and formatting.
     """
     
+    def _get_connector_name(self) -> str:
+        return "google_sheets"
+    
     def _get_category(self) -> str:
         return "data_sources"
     

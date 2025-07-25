@@ -1,63 +1,54 @@
 """
-Database connection and utilities for Supabase integration.
+Database connection and management using Supabase.
 """
-import asyncio
-from typing import Optional, Dict, Any, List
-from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions
-from app.core.config import settings
 import logging
+from typing import Optional
+from supabase import create_client, Client
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class MockSupabaseClient:
-    """Mock Supabase client for testing when real client fails."""
-    
-    def table(self, table_name: str):
-        return MockTable(table_name)
+# Database connection instance
+database_manager: Optional['DatabaseManager'] = None
 
 
-class MockTable:
-    """Mock Supabase table for testing."""
-    
-    def __init__(self, table_name: str):
-        self.table_name = table_name
-        self._query = {}
-    
-    def select(self, columns: str = "*"):
-        return self
-    
-    def insert(self, data):
-        return MockResponse([data] if isinstance(data, dict) else data)
-    
-    def update(self, data):
-        return self
-    
-    def delete(self):
-        return self
-    
-    def eq(self, column: str, value):
-        return self
-    
-    def order(self, column: str, desc: bool = False):
-        return self
-    
-    def range(self, start: int, end: int):
-        return self
-    
-    def execute(self):
-        return MockResponse([])
+async def init_database():
+    """Initialize the database connection."""
+    global database_manager
+    database_manager = DatabaseManager()
+    await database_manager.initialize()
 
 
-class MockResponse:
-    """Mock Supabase response for testing."""
+async def close_database():
+    """Close the database connection."""
+    global database_manager
+    if database_manager:
+        await database_manager.close()
+
+
+async def get_database() -> Client:
+    """Get the database client instance."""
+    if not database_manager or not database_manager._initialized:
+        await init_database()
+    return database_manager.client
+
+
+def get_supabase_client() -> Client:
+    """Get Supabase client for synchronous operations."""
+    # Use service role key for backend operations to bypass RLS
+    key_to_use = settings.SUPABASE_SERVICE_ROLE_KEY if settings.SUPABASE_SERVICE_ROLE_KEY else settings.SUPABASE_KEY
     
-    def __init__(self, data):
-        self.data = data
-    
-    def execute(self):
-        return self
+    return create_client(
+        supabase_url=settings.SUPABASE_URL,
+        supabase_key=key_to_use
+    )
+
+
+class HealthCheckResult:
+    def __init__(self, status: str, details: dict):
+        self.status = status
+        self.details = details
 
 
 class DatabaseManager:
@@ -73,10 +64,22 @@ class DatabaseManager:
             return
             
         try:
-            # Create simple client without complex options
+            # Use service role key for backend operations to bypass RLS policies
+            key_to_use = settings.SUPABASE_SERVICE_ROLE_KEY if settings.SUPABASE_SERVICE_ROLE_KEY else settings.SUPABASE_KEY
+            
+            logger.info(f"Initializing database with:")
+            logger.info(f"- SUPABASE_URL: {'SET' if settings.SUPABASE_URL else 'MISSING'}")
+            logger.info(f"- SUPABASE_KEY (anon): {'SET' if settings.SUPABASE_KEY else 'MISSING'}")
+            logger.info(f"- SUPABASE_SERVICE_ROLE_KEY: {'SET' if settings.SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
+            
+            if settings.SUPABASE_SERVICE_ROLE_KEY:
+                logger.info("Using service role key for database operations (bypasses RLS)")
+            else:
+                logger.warning("Service role key not found, using anon key (may hit RLS restrictions)")
+            
             self._client = create_client(
                 supabase_url=settings.SUPABASE_URL,
-                supabase_key=settings.SUPABASE_KEY
+                supabase_key=key_to_use
             )
             
             # Test connection
@@ -110,48 +113,29 @@ class DatabaseManager:
         return self._client
     
     async def close(self) -> None:
-        """Close database connections and cleanup."""
-        if self._client:
-            # Supabase client doesn't require explicit closing
-            # but we can cleanup any cached data
-            self._client = None
-            self._initialized = False
-            logger.info("Database connection closed")
+        """Close database connections."""
+        # Supabase client doesn't need explicit closing
+        self._initialized = False
+        self._client = None
+        logger.info("Database connections closed")
 
 
-# Global database manager instance
-db_manager = DatabaseManager()
-
-
-async def get_database() -> Client:
-    """Dependency to get database client."""
-    if not db_manager._initialized:
-        await db_manager.initialize()
-    return db_manager.client
-
-
-async def init_database() -> None:
-    """Initialize database connection on startup."""
-    await db_manager.initialize()
-
-
-async def close_database() -> None:
-    """Close database connection on shutdown."""
-    await db_manager.close()
-
-
-def get_supabase_client() -> Client:
-    """Get Supabase client synchronously for use in services."""
-    if not db_manager._initialized or not db_manager._client:
-        try:
-            # Create a simple client without complex options for testing
-            return create_client(
-                supabase_url=settings.SUPABASE_URL,
-                supabase_key=settings.SUPABASE_KEY
-            )
-        except Exception as e:
-            logger.error(f"Failed to create Supabase client: {e}")
-            # Return a mock client for testing if Supabase fails
-            return MockSupabaseClient()
+class DatabaseConnection:
+    """Context manager for database connections."""
     
-    return db_manager.client
+    def __init__(self):
+        self.client: Optional[Client] = None
+    
+    async def __aenter__(self) -> Client:
+        self.client = await get_database()
+        return self.client
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # No explicit cleanup needed for Supabase client
+        pass
+
+
+# Convenience function for getting database in FastAPI dependencies
+async def get_supabase_dependency() -> Client:
+    """FastAPI dependency for getting Supabase client."""
+    return await get_database()

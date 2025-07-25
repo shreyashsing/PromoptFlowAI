@@ -44,7 +44,10 @@ class AuthTokenService:
                 "is_active": True
             }
             
-            result = self.db.table('auth_tokens').upsert(token_data).execute()
+            result = self.db.table('auth_tokens').upsert(
+                token_data,
+                on_conflict="user_id,connector_name,token_type"
+            ).execute()
             
             if not result.data:
                 raise Exception("Failed to store token")

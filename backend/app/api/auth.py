@@ -1,13 +1,19 @@
 """
 Authentication API endpoints.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
+import secrets
+import httpx
+from urllib.parse import urlencode
 from app.core.auth import get_auth_service, get_current_user, AuthService
+from app.core.config import settings
 from app.core.database import get_database
 from app.services.auth_tokens import get_auth_token_service, AuthTokenService
 from app.models.database import CreateAuthTokenRequest, UpdateUserProfileRequest
+from app.models.base import AuthType
 from supabase import Client
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -312,4 +318,166 @@ async def delete_auth_token(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete token: {str(e)}"
+        )
+
+
+# OAuth endpoints
+class OAuthInitiateRequest(BaseModel):
+    connector_name: str
+    redirect_uri: Optional[str] = None
+
+
+class OAuthCallbackRequest(BaseModel):
+    code: str
+    state: str
+    connector_name: str
+
+
+@router.post("/oauth/initiate")
+async def initiate_oauth(
+    request: OAuthInitiateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Initiate OAuth flow for a connector."""
+    try:
+        if request.connector_name == "gmail_connector":
+            # Gmail OAuth configuration
+            client_id = settings.GMAIL_CLIENT_ID
+            if not client_id:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Gmail OAuth not configured - missing GMAIL_CLIENT_ID"
+                )
+            redirect_uri = request.redirect_uri or "http://localhost:3000/auth/oauth/callback"
+            
+            # Generate state for CSRF protection
+            state = secrets.token_urlsafe(32)
+            
+            # Store state temporarily (in production, use Redis or database)
+            # For now, we'll include it in the response
+            
+            scopes = [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.send",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/gmail.labels"
+            ]
+            
+            auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "scope": " ".join(scopes),
+                "response_type": "code",
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state
+            })
+            
+            return {
+                "authorization_url": auth_url,
+                "state": state,
+                "redirect_uri": redirect_uri
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"OAuth not supported for connector: {request.connector_name}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate OAuth: {str(e)}"
+        )
+
+
+@router.post("/oauth/callback")
+async def oauth_callback(
+    request: OAuthCallbackRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Client = Depends(get_database)
+):
+    """Handle OAuth callback and exchange code for tokens."""
+    try:
+        if request.connector_name == "gmail_connector":
+            # Gmail OAuth token exchange
+            client_id = settings.GMAIL_CLIENT_ID
+            client_secret = settings.GMAIL_CLIENT_SECRET
+            
+            if not client_id or not client_secret:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Gmail OAuth not configured - missing credentials"
+                )
+            
+            redirect_uri = "http://localhost:3000/auth/oauth/callback"
+            
+            # Exchange authorization code for tokens
+            async with httpx.AsyncClient() as client:
+                token_response = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": request.code,
+                        "grant_type": "authorization_code",
+                        "redirect_uri": redirect_uri
+                    }
+                )
+                
+                if token_response.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Failed to exchange authorization code for tokens"
+                    )
+                
+                tokens = token_response.json()
+                
+                # Store tokens in database
+                token_service = await get_auth_token_service(db)
+                user_id = current_user["user_id"]
+                
+                # First, deactivate any existing tokens for this connector
+                await token_service.deactivate_token(user_id, request.connector_name, AuthType.OAUTH2)
+                
+                # Prepare combined token data (both access and refresh tokens in one record)
+                token_data = {
+                    "access_token": tokens["access_token"],
+                    "token_type": tokens.get("token_type", "Bearer"),
+                    "expires_in": str(tokens.get("expires_in")) if tokens.get("expires_in") is not None else None,
+                    "scope": tokens.get("scope")
+                }
+                
+                # Add refresh token if available
+                if "refresh_token" in tokens:
+                    token_data["refresh_token"] = tokens["refresh_token"]
+                
+                # Store combined token data in single call
+                combined_token_request = CreateAuthTokenRequest(
+                    connector_name=request.connector_name,
+                    token_type=AuthType.OAUTH2,
+                    token_data=token_data
+                )
+                
+                await token_service.store_token(user_id, combined_token_request)
+                
+                return {
+                    "message": "OAuth authentication successful",
+                    "connector_name": request.connector_name,
+                    "scopes": tokens.get("scope", "").split(" ") if tokens.get("scope") else []
+                }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"OAuth callback not supported for connector: {request.connector_name}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OAuth callback failed: {str(e)}"
         )

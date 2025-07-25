@@ -342,12 +342,12 @@ class TriggerSystem:
                 "recent_executions": [
                     {
                         "execution_id": exec.execution_id,
-                        "status": exec.status,
-                        "started_at": exec.started_at.isoformat(),
-                        "completed_at": exec.completed_at.isoformat() if exec.completed_at else None,
-                        "error": exec.error
+                        "status": execution.status,
+                        "started_at": execution.started_at.isoformat(),
+                        "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+                        "error": execution.error
                     }
-                    for exec in recent_executions
+                    for execution in recent_executions
                 ],
                 "next_execution": await self._get_next_execution_time(trigger) if trigger else None
             }

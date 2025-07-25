@@ -85,7 +85,7 @@ async def create_trigger(
         trigger_system = await get_trigger_system()
         trigger = await trigger_system.create_trigger(
             workflow_id=request.workflow_id,
-            user_id=current_user["id"],
+            user_id=current_user["user_id"],
             trigger_type=request.trigger_type,
             config=request.config
         )

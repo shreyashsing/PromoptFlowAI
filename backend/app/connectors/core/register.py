@@ -13,6 +13,7 @@ from app.connectors.core import (
     WebhookConnector,
     PerplexityConnector
 )
+from app.connectors.core.text_summarizer_connector import TextSummarizerConnector
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,8 @@ def register_core_connectors():
         GmailConnector,
         GoogleSheetsConnector,
         WebhookConnector,
-        PerplexityConnector
+        PerplexityConnector,
+        TextSummarizerConnector
     ]
     
     registered_count = 0

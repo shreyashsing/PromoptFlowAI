@@ -19,6 +19,9 @@ class PerplexityConnector(BaseConnector):
     citation support, and various model options for different use cases.
     """
     
+    def _get_connector_name(self) -> str:
+        return "perplexity_search"
+    
     def _get_category(self) -> str:
         return "ai_services"
     

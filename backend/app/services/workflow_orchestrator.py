@@ -22,10 +22,12 @@ from app.models.execution import (
     ErrorHandlingResult
 )
 from app.models.connector import ConnectorExecutionContext
-from app.connectors.registry import ConnectorRegistry
+from app.connectors.registry import connector_registry
 from app.core.exceptions import WorkflowException, ConnectorException
 from app.core.database import get_supabase_client
 from app.core.error_utils import handle_database_errors, log_function_performance, ErrorBoundary
+from app.services.auth_tokens import get_auth_token_service
+from app.models.base import AuthType
 
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,7 @@ class WorkflowOrchestrator:
     """
     
     def __init__(self):
-        self.connector_registry = ConnectorRegistry()
+        self.connector_registry = connector_registry
         self.active_executions: Dict[str, ExecutionResult] = {}
         self.triggers: Dict[str, Callable] = {}
         self.checkpointer = MemorySaver()
@@ -239,12 +241,25 @@ class WorkflowOrchestrator:
                 # Get the connector
                 connector = self.connector_registry.create_connector(node.connector_name)
                 
+                # Load authentication tokens for this connector
+                auth_tokens = await self._load_auth_tokens_for_connector(
+                    state["user_id"], 
+                    node.connector_name
+                )
+                
+                # Debug: Log auth token status
+                if auth_tokens:
+                    token_keys = list(auth_tokens.keys())
+                    logger.info(f"Loaded auth tokens for {node.connector_name}: {token_keys}")
+                else:
+                    logger.warning(f"No auth tokens loaded for {node.connector_name}")
+                
                 # Prepare execution context
                 context = ConnectorExecutionContext(
                     user_id=state["user_id"],
                     workflow_id=state["workflow_id"],
                     node_id=node.id,
-                    auth_tokens={},  # TODO: Load from database
+                    auth_tokens=auth_tokens,
                     previous_results=state["node_results"]
                 )
                 
@@ -386,6 +401,152 @@ class WorkflowOrchestrator:
         
         return current
     
+    async def _load_auth_tokens_for_connector(self, user_id: str, connector_name: str) -> Dict[str, Any]:
+        """
+        Load authentication tokens for a specific connector and user.
+        Automatically refreshes access tokens if needed.
+        
+        Args:
+            user_id: The user ID
+            connector_name: The connector name to load tokens for
+            
+        Returns:
+            Dictionary containing authentication tokens for the connector
+        """
+        try:
+            supabase = get_supabase_client()
+            auth_service = await get_auth_token_service(supabase)
+            
+            # Try to get OAuth2 token first (most common for connectors like Gmail)
+            oauth_token = await auth_service.get_token(user_id, connector_name, AuthType.OAUTH2)
+            if oauth_token:
+                token_data = oauth_token["token_data"]
+                
+                # Check if we have access_token, if not try to refresh using refresh_token
+                if "access_token" not in token_data and "refresh_token" in token_data:
+                    logger.info(f"Access token missing for {connector_name}, attempting to refresh using refresh token")
+                    
+                    refreshed_tokens = await self._refresh_oauth_token(
+                        connector_name, 
+                        token_data["refresh_token"]
+                    )
+                    
+                    if refreshed_tokens:
+                        # Update stored tokens with refreshed data
+                        combined_token_data = {**token_data, **refreshed_tokens}
+                        
+                        # Store updated tokens
+                        from app.models.database import CreateAuthTokenRequest
+                        update_request = CreateAuthTokenRequest(
+                            connector_name=connector_name,
+                            token_type=AuthType.OAUTH2,
+                            token_data=combined_token_data
+                        )
+                        await auth_service.store_token(user_id, update_request)
+                        
+                        logger.info(f"Successfully refreshed and stored access token for {connector_name}")
+                        return self._normalize_token_data(combined_token_data)
+                    else:
+                        logger.error(f"Failed to refresh access token for {connector_name}")
+                        return {}
+                
+                # Normalize token data types (ensure expires_in is string)
+                normalized_token_data = self._normalize_token_data(token_data)
+                return normalized_token_data
+            
+            # Try API key if OAuth2 not found
+            api_key_token = await auth_service.get_token(user_id, connector_name, AuthType.API_KEY)
+            if api_key_token:
+                return self._normalize_token_data(api_key_token["token_data"])
+            
+            # Return empty dict if no tokens found
+            logger.warning(f"No authentication tokens found for user {user_id}, connector {connector_name}")
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Failed to load auth tokens for {connector_name}: {str(e)}")
+            return {}
+    
+    def _normalize_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize token data types to match expected Pydantic model requirements.
+        
+        Args:
+            token_data: Raw token data from database
+            
+        Returns:
+            Normalized token data with correct types
+        """
+        normalized = token_data.copy()
+        
+        # Convert expires_in to string if it's an integer
+        if "expires_in" in normalized and isinstance(normalized["expires_in"], int):
+            logger.debug(f"Converting expires_in from int {normalized['expires_in']} to string")
+            normalized["expires_in"] = str(normalized["expires_in"])
+        
+        # Ensure token_type is string
+        if "token_type" in normalized and normalized["token_type"] is not None:
+            normalized["token_type"] = str(normalized["token_type"])
+        
+        # Ensure other common fields are strings
+        for field in ["access_token", "refresh_token", "scope"]:
+            if field in normalized and normalized[field] is not None:
+                normalized[field] = str(normalized[field])
+        
+        return normalized
+    
+    async def _refresh_oauth_token(self, connector_name: str, refresh_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Refresh OAuth access token using refresh token.
+        
+        Args:
+            connector_name: The connector name (e.g., 'gmail_connector')
+            refresh_token: The refresh token to use
+            
+        Returns:
+            Dictionary with new access token and related data, or None if refresh failed
+        """
+        try:
+            if connector_name == "gmail_connector":
+                from app.core.config import settings
+                import httpx
+                
+                if not settings.GMAIL_CLIENT_ID or not settings.GMAIL_CLIENT_SECRET:
+                    logger.error("Gmail OAuth credentials not configured")
+                    return None
+                
+                # Make token refresh request to Google
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        "https://oauth2.googleapis.com/token",
+                        data={
+                            "client_id": settings.GMAIL_CLIENT_ID,
+                            "client_secret": settings.GMAIL_CLIENT_SECRET,
+                            "refresh_token": refresh_token,
+                            "grant_type": "refresh_token"
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        tokens = response.json()
+                        return {
+                            "access_token": tokens["access_token"],
+                            "token_type": tokens.get("token_type", "Bearer"),
+                            "expires_in": str(tokens.get("expires_in")) if tokens.get("expires_in") is not None else None,
+                            "scope": tokens.get("scope")
+                        }
+                    else:
+                        logger.error(f"Token refresh failed with status {response.status_code}: {response.text}")
+                        return None
+            
+            # Add support for other OAuth connectors here as needed
+            logger.warning(f"Token refresh not implemented for connector: {connector_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error refreshing OAuth token for {connector_name}: {str(e)}")
+            return None
+    
     async def _add_workflow_edges(self, graph: StateGraph, workflow: WorkflowPlan):
         """
         Add edges to the LangGraph based on workflow structure.
@@ -410,8 +571,19 @@ class WorkflowOrchestrator:
             graph.add_edge("start", "end")
             added_edges.add(("start", "end"))
         
+        # Get all valid node IDs (including start and end)
+        valid_node_ids = {"start", "end"} | {node.id for node in workflow.nodes}
+        
         # Add edges based on workflow edges (explicit edges take precedence)
         for edge in workflow.edges:
+            # Validate that both source and target nodes exist
+            if edge.source not in valid_node_ids:
+                logger.warning(f"Edge source node '{edge.source}' not found in workflow nodes")
+                continue
+            if edge.target not in valid_node_ids:
+                logger.warning(f"Edge target node '{edge.target}' not found in workflow nodes")
+                continue
+                
             edge_key = (edge.source, edge.target)
             if edge_key not in added_edges:
                 if edge.condition:
@@ -432,6 +604,11 @@ class WorkflowOrchestrator:
         # Add edges based on node dependencies (only if not already added by explicit edges)
         for node in workflow.nodes:
             for dependency in node.dependencies:
+                # Validate that dependency node exists
+                if dependency not in valid_node_ids:
+                    logger.warning(f"Dependency node '{dependency}' not found for node '{node.id}'")
+                    continue
+                    
                 edge_key = (dependency, node.id)
                 if edge_key not in added_edges:
                     graph.add_edge(dependency, node.id)
@@ -744,7 +921,7 @@ class WorkflowOrchestrator:
             ).not_.is_("duration_ms", "null").execute()
             
             if duration_response.data:
-                durations = [exec["duration_ms"] for exec in duration_response.data]
+                durations = [execution["duration_ms"] for execution in duration_response.data]
                 if durations:
                     stats["average_duration_ms"] = sum(durations) / len(durations)
             
@@ -760,8 +937,7 @@ class WorkflowOrchestrator:
                 "pending": 0,
                 "cancelled": 0,
                 "success_rate": 0.0,
-                "average_duration_ms": 0,
-                "error": str(e)
+                "average_duration_ms": 0
             }
     
     async def cancel_execution(self, execution_id: str, user_id: str) -> bool:
@@ -773,62 +949,36 @@ class WorkflowOrchestrator:
             user_id: The user ID for authorization
             
         Returns:
-            True if cancelled successfully, False otherwise
+            True if cancellation was successful, False otherwise
         """
         try:
-            # Check if execution is active
+            # Check if execution is in active executions
             if execution_id in self.active_executions:
-                execution_result = self.active_executions[execution_id]
+                execution = self.active_executions[execution_id]
                 
                 # Verify user authorization
-                if execution_result.user_id != user_id:
-                    logger.warning(f"Unauthorized cancellation attempt for execution {execution_id}")
+                if execution.user_id != user_id:
                     return False
                 
-                # Update status
-                execution_result.status = ExecutionStatus.CANCELLED
-                execution_result.completed_at = datetime.utcnow()
-                execution_result.error = "Execution cancelled by user"
-                
-                # Store the cancelled result
-                await self._store_execution_result(execution_result)
-                
-                # Remove from active executions
-                del self.active_executions[execution_id]
-                
-                logger.info(f"Cancelled execution {execution_id}")
-                return True
-            
-            # If not active, check if it can be cancelled in database
-            supabase = get_supabase_client()
-            response = supabase.table("workflow_executions").select(
-                "status, user_id"
-            ).eq("id", execution_id).execute()
-            
-            if response.data:
-                exec_data = response.data[0]
-                
-                # Verify user authorization
-                if exec_data["user_id"] != user_id:
-                    logger.warning(f"Unauthorized cancellation attempt for execution {execution_id}")
-                    return False
-                
-                # Only cancel if still running or pending
-                if exec_data["status"] in ["running", "pending"]:
-                    update_response = supabase.table("workflow_executions").update({
-                        "status": "cancelled",
-                        "completed_at": datetime.utcnow().isoformat(),
-                        "error_message": "Execution cancelled by user"
-                    }).eq("id", execution_id).execute()
+                # Only cancel if still running
+                if execution.status in [ExecutionStatus.RUNNING, ExecutionStatus.PENDING]:
+                    execution.status = ExecutionStatus.CANCELLED
+                    execution.completed_at = datetime.utcnow()
+                    execution.error = "Execution cancelled by user"
                     
-                    if update_response.data:
-                        logger.info(f"Cancelled execution {execution_id} in database")
-                        return True
+                    # Store the cancelled execution
+                    await self._store_execution_result(execution)
+                    
+                    # Remove from active executions
+                    del self.active_executions[execution_id]
+                    
+                    logger.info(f"Cancelled execution {execution_id} for user {user_id}")
+                    return True
             
             return False
             
         except Exception as e:
-            logger.error(f"Error cancelling execution: {str(e)}")
+            logger.error(f"Error cancelling execution {execution_id}: {str(e)}")
             return False
     
     async def handle_node_error(self, node: WorkflowNode, error: Exception) -> ErrorHandlingResult:

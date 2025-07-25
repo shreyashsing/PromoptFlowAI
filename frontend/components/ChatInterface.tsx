@@ -10,6 +10,7 @@ import { Textarea } from '../components/ui/textarea'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { ScrollArea } from '../components/ui/scroll-area'
+import WorkflowExecutionStatus from './WorkflowExecutionStatus'
 
 interface ChatInterfaceProps {
   conversationContext: ConversationContext | null
@@ -25,6 +26,7 @@ export default function ChatInterface({
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [executionId, setExecutionId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -48,10 +50,20 @@ export default function ChatInterface({
     setError(null)
 
     try {
-      const response = await chatAPI.sendMessage({
-        message: message.trim(),
-        session_id: conversationContext?.session_id
-      })
+      let response
+      
+      if (conversationContext?.session_id) {
+        // Continue existing conversation
+        response = await chatAPI.sendMessage({
+          message: message.trim(),
+          session_id: conversationContext.session_id
+        })
+      } else {
+        // Start new conversation
+        response = await chatAPI.startNewConversation({
+          prompt: message.trim()
+        })
+      }
 
       // Create a new message for the user
       const userMessage = {
@@ -65,31 +77,42 @@ export default function ChatInterface({
       const assistantMessage = {
         id: Date.now().toString() + '-assistant', 
         role: 'assistant' as const,
-        content: response.response,
+        content: response.message,
         timestamp: new Date().toISOString()
       }
 
       // Update conversation context with new messages
-      const updatedContext = {
-        ...response.conversation_context,
+      const updatedContext: ConversationContext = {
+        session_id: response.session_id,
+        user_id: response.conversation_context?.user_id || '00000000-0000-0000-0000-000000000001',
         messages: [
           ...(conversationContext?.messages || []),
           userMessage,
           assistantMessage
-        ]
+        ],
+        current_plan: response.current_plan,
+        state: response.conversation_state as any,
+        created_at: conversationContext?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }
 
       setConversationContext(updatedContext)
       
       // Update workflow if one was generated
-      if (response.conversation_context.current_plan) {
-        setCurrentWorkflow(response.conversation_context.current_plan)
+      if (response.current_plan) {
+        setCurrentWorkflow(response.current_plan)
+      }
+
+      // Check if response contains execution ID (workflow was executed)
+      const executionIdMatch = response.message.match(/Execution ID: `([^`]+)`/)
+      if (executionIdMatch) {
+        setExecutionId(executionIdMatch[1])
       }
 
       setMessage('')
     } catch (err: any) {
       console.error('Chat error:', err)
-      if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+      if (err.message && err.message.includes('Failed to fetch')) {
         setError('Backend server is not running. Please start the backend server at http://localhost:8000')
       } else {
         setError(err.response?.data?.detail || 'Failed to send message. Please try again.')
@@ -181,6 +204,18 @@ export default function ChatInterface({
                       : 'bg-slate-800/50 border-slate-700/50 text-slate-100'
                   }`}>
                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    
+                    {/* Show execution status if this message contains execution info */}
+                    {msg.role === 'assistant' && executionId && msg.content.includes('Execution ID:') && (
+                      <WorkflowExecutionStatus 
+                        executionId={executionId}
+                        workflowName={conversationContext?.current_plan?.name || 'Workflow'}
+                        onStatusUpdate={(status) => {
+                          console.log('Execution status updated:', status)
+                        }}
+                      />
+                    )}
+                    
                     <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10">
                       <p className="text-xs opacity-70">
                         {new Date(msg.timestamp).toLocaleTimeString()}
