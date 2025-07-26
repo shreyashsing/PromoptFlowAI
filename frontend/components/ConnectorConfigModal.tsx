@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { WorkflowNode } from '@/lib/types'
 import { getConnectorSchema } from '@/lib/connector-schemas'
-import { supabase } from '../lib/supabase'
+import { supabase } from '@/lib/supabase'
 
 interface ConnectorConfigModalProps {
   isOpen: boolean
@@ -33,6 +33,8 @@ export default function ConnectorConfigModal({
   const [authStatus, setAuthStatus] = useState<'none' | 'required' | 'configured' | 'checking'>('none')
   const [parametersLoaded, setParametersLoaded] = useState(false)
   const [isAuthenticating, setIsAuthenticating] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false)
 
   useEffect(() => {
     if (node) {
@@ -80,7 +82,7 @@ export default function ConnectorConfigModal({
 
   // Function to check authentication status for a connector
   const checkAuthenticationStatus = async (connectorName: string) => {
-    if (connectorName === 'gmail_connector' || connectorName === 'perplexity_search') {
+    if (connectorName === 'gmail_connector' || connectorName === 'perplexity_search' || connectorName === 'google_sheets') {
       setAuthStatus('checking')
       
       try {
@@ -92,7 +94,7 @@ export default function ConnectorConfigModal({
           return
         }
         
-        const response = await fetch('http://localhost:8000/api/v1/auth/tokens', {
+        const response = await fetch('/api/auth/tokens', {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -106,7 +108,7 @@ export default function ConnectorConfigModal({
           // Check if this specific connector has valid authentication
           const hasAuthToken = authData.tokens && authData.tokens.some((token: any) => 
             token.connector_name === connectorName && 
-            token.token_type === 'oauth2'
+            (token.token_type === 'oauth2' || token.token_type === 'api_key')
           )
           
           if (hasAuthToken) {
@@ -140,7 +142,7 @@ export default function ConnectorConfigModal({
     }))
   }
 
-  const handleGmailOAuth = async () => {
+  const handleGoogleOAuth = async () => {
     if (!node) return
     
     setIsAuthenticating(true)
@@ -158,7 +160,7 @@ export default function ConnectorConfigModal({
       const redirectUri = `${window.location.origin}/auth/oauth/callback`
       
       // Initiate OAuth flow
-      const response = await fetch('http://localhost:8000/api/v1/auth/oauth/initiate', {
+      const response = await fetch('/api/auth/oauth/initiate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,13 +183,62 @@ export default function ConnectorConfigModal({
       localStorage.setItem('oauth_connector', node.connector_name)
       
       // Redirect to Google OAuth
-      window.location.href = data.auth_url
+      window.location.href = data.authorization_url
       
     } catch (error) {
       console.error('OAuth initiation failed:', error)
-      alert('Failed to start Gmail authentication. Please try again.')
+      const serviceName = node.connector_name === 'gmail_connector' ? 'Gmail' : 'Google Sheets'
+      alert(`Failed to start ${serviceName} authentication. Please try again.`)
     } finally {
       setIsAuthenticating(false)
+    }
+  }
+
+  const handleSaveApiKey = async () => {
+    if (!node || !apiKey.trim()) {
+      alert('Please enter an API key')
+      return
+    }
+
+    setIsSavingApiKey(true)
+    try {
+      // Get current Supabase session
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session?.access_token) {
+        alert('Please log in to save API key')
+        return
+      }
+
+      const response = await fetch('/api/auth/tokens', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          connector_name: node.connector_name,
+          token_type: 'api_key',
+          token_data: {
+            api_key: apiKey
+          }
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Failed to save API key')
+      }
+
+      alert('API key saved successfully!')
+      setAuthStatus('configured')
+      setApiKey('') // Clear the input after successful save
+      
+    } catch (error) {
+      console.error('Failed to save API key:', error)
+      alert(`Failed to save API key: ${error.message}`)
+    } finally {
+      setIsSavingApiKey(false)
     }
   }
 
@@ -476,7 +527,25 @@ export default function ConnectorConfigModal({
                       </p>
                       <div className="flex gap-2">
                         <button 
-                          onClick={handleGmailOAuth}
+                          onClick={handleGoogleOAuth}
+                          disabled={isAuthenticating}
+                          className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 disabled:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Key className="w-4 h-4" />
+                          {isAuthenticating ? 'Reconnecting...' : 'Reconnect Account'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {node.connector_name === 'google_sheets' && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-gray-600">
+                        Your Google Sheets account is connected and ready to use for reading and writing spreadsheets.
+                      </p>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={handleGoogleOAuth}
                           disabled={isAuthenticating}
                           className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 disabled:bg-gray-50 transition-colors flex items-center justify-center gap-2"
                         >
@@ -521,12 +590,28 @@ export default function ConnectorConfigModal({
                         Connect your Gmail account to send and receive emails.
                       </p>
                       <button 
-                        onClick={handleGmailOAuth}
+                        onClick={handleGoogleOAuth}
                         disabled={isAuthenticating}
                         className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors flex items-center justify-center gap-2"
                       >
                         <Key className="w-4 h-4" />
                         {isAuthenticating ? 'Connecting...' : 'Connect Gmail Account'}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {node.connector_name === 'google_sheets' && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-gray-600">
+                        Connect your Google account to read and write Google Sheets.
+                      </p>
+                      <button 
+                        onClick={handleGoogleOAuth}
+                        disabled={isAuthenticating}
+                        className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:bg-green-400 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Key className="w-4 h-4" />
+                        {isAuthenticating ? 'Connecting...' : 'Connect Google Sheets'}
                       </button>
                     </div>
                   )}
@@ -540,14 +625,20 @@ export default function ConnectorConfigModal({
                         <label className="block text-sm font-medium text-gray-700">API Key</label>
                         <input 
                           type="password" 
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
                           placeholder="Enter your Perplexity API key"
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
                           style={{ color: '#111827 !important', backgroundColor: '#ffffff !important' }}
                         />
                       </div>
-                      <button className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                      <button 
+                        onClick={handleSaveApiKey}
+                        disabled={isSavingApiKey || !apiKey.trim()}
+                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors flex items-center justify-center gap-2"
+                      >
                         <Key className="w-4 h-4" />
-                        Save API Key
+                        {isSavingApiKey ? 'Saving...' : 'Save API Key'}
                       </button>
                     </div>
                   )}

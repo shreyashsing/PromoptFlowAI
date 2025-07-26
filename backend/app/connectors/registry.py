@@ -276,3 +276,13 @@ class ConnectorRegistry:
 
 # Global connector registry instance
 connector_registry = ConnectorRegistry()
+
+
+def get_connector_registry() -> ConnectorRegistry:
+    """
+    Get the global connector registry instance.
+    
+    Returns:
+        The global ConnectorRegistry instance
+    """
+    return connector_registry

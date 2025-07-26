@@ -335,46 +335,130 @@ class WorkflowOrchestrator:
         
         resolved = {}
         
+        # Create a mapping from connector names to node IDs for easier lookup
+        connector_to_node_map = {}
+        for node_id, result_data in previous_results.items():
+            connector_name = result_data.get("connector_name")
+            if connector_name:
+                connector_to_node_map[connector_name] = node_id
+        
+        logger.info(f"Available previous results: {list(previous_results.keys())}")
+        logger.info(f"Connector to node mapping: {connector_to_node_map}")
+        
         for key, value in parameters.items():
             if isinstance(value, str):
-                # Handle embedded references like "Hello ${node1.user.name}"
                 resolved_value = value
                 
-                # Find all ${...} patterns in the string
-                pattern = r'\$\{([^}]+)\}'
-                matches = re.findall(pattern, value)
+                # Process patterns sequentially to avoid conflicts
+                # 1. First process double braces {{...}}
+                double_brace_pattern = r'\{\{([^}]+)\}\}'
+                double_matches = re.findall(double_brace_pattern, value)
                 
-                for reference in matches:
-                    if "." in reference:
-                        node_id, field_path = reference.split(".", 1)
-                        if node_id in previous_results:
-                            node_result = previous_results[node_id]
-                            # Navigate the field path
-                            replacement_value = self._get_nested_value(node_result.get("data"), field_path)
-                            if replacement_value is not None:
-                                resolved_value = resolved_value.replace(f"${{{reference}}}", str(replacement_value))
-                            else:
-                                logger.warning(f"Field path {field_path} not found in node {node_id} results")
-                        else:
-                            logger.warning(f"Referenced node {node_id} not found in previous results")
-                    else:
-                        # Simple node reference
-                        if reference in previous_results:
-                            replacement_value = previous_results[reference].get("data")
-                            if replacement_value is not None:
-                                resolved_value = resolved_value.replace(f"${{{reference}}}", str(replacement_value))
-                        else:
-                            logger.warning(f"Referenced node {reference} not found in previous results")
+                for reference in double_matches:
+                    original_pattern = f"{{{{{reference}}}}}"  # {{reference}}
+                    logger.info(f"Processing reference: {reference} (pattern: {original_pattern})")
+                    
+                    replacement_value = self._resolve_reference(reference, previous_results, connector_to_node_map)
+                    
+                    if replacement_value is not None:
+                        resolved_value = resolved_value.replace(original_pattern, str(replacement_value))
+                        logger.info(f"Replaced {original_pattern} with: {replacement_value}")
+                
+                # 2. Then process dollar braces ${...}
+                dollar_brace_pattern = r'\$\{([^}]+)\}'
+                dollar_matches = re.findall(dollar_brace_pattern, resolved_value)
+                
+                for reference in dollar_matches:
+                    original_pattern = f"${{{reference}}}"
+                    logger.info(f"Processing reference: {reference} (pattern: {original_pattern})")
+                    
+                    replacement_value = self._resolve_reference(reference, previous_results, connector_to_node_map)
+                    
+                    if replacement_value is not None:
+                        resolved_value = resolved_value.replace(original_pattern, str(replacement_value))
+                        logger.info(f"Replaced {original_pattern} with: {replacement_value}")
+                
+                # 3. Finally process single braces {...} (but only if no double braces were processed)
+                if not double_matches:
+                    single_brace_pattern = r'\{([^}]+)\}'
+                    single_matches = re.findall(single_brace_pattern, resolved_value)
+                    
+                    for reference in single_matches:
+                        original_pattern = f"{{{reference}}}"
+                        logger.info(f"Processing reference: {reference} (pattern: {original_pattern})")
+                        
+                        replacement_value = self._resolve_reference(reference, previous_results, connector_to_node_map)
+                        
+                        if replacement_value is not None:
+                            resolved_value = resolved_value.replace(original_pattern, str(replacement_value))
+                            logger.info(f"Replaced {original_pattern} with: {replacement_value}")
                 
                 resolved[key] = resolved_value
+                if resolved_value != value:
+                    logger.info(f"Parameter {key}: '{value}' -> '{resolved_value}'")
             else:
                 resolved[key] = value
         
         return resolved
     
+    def _resolve_reference(
+        self, 
+        reference: str, 
+        previous_results: Dict[str, Any], 
+        connector_to_node_map: Dict[str, str]
+    ) -> Any:
+        """
+        Resolve a single parameter reference to its actual value.
+        
+        Args:
+            reference: The reference string (e.g., "text_summarizer.result")
+            previous_results: Results from previously executed nodes
+            connector_to_node_map: Mapping from connector names to node IDs
+            
+        Returns:
+            The resolved value or None if not found
+        """
+        if "." in reference:
+            # Handle node_id.field_path or connector_name.field_path
+            node_or_connector, field_path = reference.split(".", 1)
+            
+            # Try node ID first, then connector name
+            target_node_id = None
+            if node_or_connector in previous_results:
+                target_node_id = node_or_connector
+            elif node_or_connector in connector_to_node_map:
+                target_node_id = connector_to_node_map[node_or_connector]
+            
+            if target_node_id:
+                node_result = previous_results[target_node_id]
+                logger.info(f"Found node result for {node_or_connector} -> {target_node_id}")
+                logger.info(f"Node result data: {node_result.get('data')}")
+                
+                # Navigate the field path
+                replacement_value = self._get_nested_value(node_result.get("data"), field_path)
+                logger.info(f"Extracted value for {field_path}: {replacement_value}")
+                return replacement_value
+            else:
+                logger.warning(f"Referenced node/connector {node_or_connector} not found in previous results")
+                return None
+        else:
+            # Simple node reference
+            target_node_id = None
+            if reference in previous_results:
+                target_node_id = reference
+            elif reference in connector_to_node_map:
+                target_node_id = connector_to_node_map[reference]
+            
+            if target_node_id:
+                replacement_value = previous_results[target_node_id].get("data")
+                return replacement_value
+            else:
+                logger.warning(f"Referenced node/connector {reference} not found in previous results")
+                return None
+    
     def _get_nested_value(self, data: Any, field_path: str) -> Any:
         """
-        Get a nested value from data using dot notation.
+        Get a nested value from data using dot notation with intelligent field mapping.
         
         Args:
             data: The data structure to navigate
@@ -386,19 +470,72 @@ class WorkflowOrchestrator:
         if data is None:
             return None
         
+        # Define connector-specific field mappings for common patterns
+        FIELD_MAPPINGS = {
+            'result': [
+                'result', 'data', 'output', 'response', 'summary', 'content', 
+                'text', 'message', 'answer', 'value'
+            ]
+        }
+        
         current = data
-        for field in field_path.split("."):
-            if isinstance(current, dict) and field in current:
-                current = current[field]
+        fields = field_path.split(".")
+        
+        for i, field in enumerate(fields):
+            if isinstance(current, dict):
+                # First try the exact field name
+                if field in current:
+                    current = current[field]
+                # If field is 'result' and not found, try mapped alternatives with intelligent combining
+                elif field == 'result' and field not in current:
+                    found_value = None
+                    
+                    # Special handling for Perplexity data with citations
+                    if 'response' in current and 'citations' in current and current.get('citations'):
+                        # Combine content and citations for rich output
+                        main_content = current['response']
+                        citations = current['citations']
+                        
+                        # Format citations as clickable links
+                        if isinstance(citations, list) and citations:
+                            citation_text = "\n\n📚 **Sources:**\n"
+                            for idx, citation in enumerate(citations, 1):
+                                if isinstance(citation, str):
+                                    citation_text += f"{idx}. {citation}\n"
+                                elif isinstance(citation, dict) and 'url' in citation:
+                                    title = citation.get('title', citation['url'])
+                                    citation_text += f"{idx}. [{title}]({citation['url']})\n"
+                            
+                            combined_result = f"{main_content}{citation_text}"
+                            logger.info(f"Combined Perplexity content with {len(citations)} citations")
+                            return combined_result
+                    
+                    # Fallback to standard field mapping
+                    for alternative in FIELD_MAPPINGS['result']:
+                        if alternative in current:
+                            current = current[alternative]
+                            logger.info(f"Mapped field 'result' to '{alternative}' in data: {current}")
+                            found_value = current
+                            break
+                            
+                    if found_value is None:
+                        logger.warning(f"Field '{field}' not found in data. Available fields: {list(current.keys())}")
+                        return None
+                else:
+                    logger.warning(f"Field '{field}' not found in data. Available fields: {list(current.keys())}")
+                    return None
             elif isinstance(current, list) and field.isdigit():
                 index = int(field)
                 if 0 <= index < len(current):
                     current = current[index]
                 else:
+                    logger.warning(f"Index {index} out of range for list of length {len(current)}")
                     return None
             else:
+                logger.warning(f"Cannot navigate field '{field}' in data type {type(current)}")
                 return None
         
+        logger.info(f"Successfully extracted value from path '{field_path}': {current}")
         return current
     
     async def _load_auth_tokens_for_connector(self, user_id: str, connector_name: str) -> Dict[str, Any]:

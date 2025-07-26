@@ -340,28 +340,32 @@ async def initiate_oauth(
 ):
     """Initiate OAuth flow for a connector."""
     try:
-        if request.connector_name == "gmail_connector":
-            # Gmail OAuth configuration
+        if request.connector_name in ["gmail_connector", "google_sheets"]:
+            # Google OAuth configuration (works for both Gmail and Sheets)
             client_id = settings.GMAIL_CLIENT_ID
             if not client_id:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Gmail OAuth not configured - missing GMAIL_CLIENT_ID"
+                    detail="Google OAuth not configured - missing GMAIL_CLIENT_ID"
                 )
             redirect_uri = request.redirect_uri or "http://localhost:3000/auth/oauth/callback"
             
             # Generate state for CSRF protection
             state = secrets.token_urlsafe(32)
             
-            # Store state temporarily (in production, use Redis or database)
-            # For now, we'll include it in the response
-            
-            scopes = [
-                "https://www.googleapis.com/auth/gmail.readonly",
-                "https://www.googleapis.com/auth/gmail.send",
-                "https://www.googleapis.com/auth/gmail.modify",
-                "https://www.googleapis.com/auth/gmail.labels"
-            ]
+            # Define scopes based on connector
+            if request.connector_name == "gmail_connector":
+                scopes = [
+                    "https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/gmail.send",
+                    "https://www.googleapis.com/auth/gmail.modify",
+                    "https://www.googleapis.com/auth/gmail.labels"
+                ]
+            elif request.connector_name == "google_sheets":
+                scopes = [
+                    "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive.file"
+                ]
             
             auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
                 "client_id": client_id,
@@ -401,15 +405,15 @@ async def oauth_callback(
 ):
     """Handle OAuth callback and exchange code for tokens."""
     try:
-        if request.connector_name == "gmail_connector":
-            # Gmail OAuth token exchange
+        if request.connector_name in ["gmail_connector", "google_sheets"]:
+            # Google OAuth token exchange (works for both Gmail and Sheets)
             client_id = settings.GMAIL_CLIENT_ID
             client_secret = settings.GMAIL_CLIENT_SECRET
             
             if not client_id or not client_secret:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Gmail OAuth not configured - missing credentials"
+                    detail="Google OAuth not configured - missing credentials"
                 )
             
             redirect_uri = "http://localhost:3000/auth/oauth/callback"

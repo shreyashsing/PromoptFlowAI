@@ -55,13 +55,50 @@ class TextSummarizerConnector(BaseConnector):
             max_length = parameters.get("max_length", 100)
             style = parameters.get("style", "concise")
             
-            # Create summarization prompt based on style
-            if style == "bullet_points":
-                prompt = f"Summarize the following text in bullet points (max {max_length} words):\n\n{text}"
-            elif style == "detailed":
-                prompt = f"Provide a detailed summary of the following text (max {max_length} words):\n\n{text}"
+            # Detect if text contains citations/sources that should be preserved
+            has_citations = "📚 **Sources:**" in text or "Sources:" in text or "Citations:" in text
+            
+            # Create summarization prompt based on style and citation preservation
+            if has_citations:
+                # Special handling for text with citations - instruct AI to preserve them
+                if style == "bullet_points":
+                    prompt = f"""Summarize the following text in bullet points (max {max_length} words for the summary content). 
+
+IMPORTANT: The text contains source links/citations. Please:
+1. Create a concise bullet-point summary of the main content
+2. PRESERVE the complete "📚 **Sources:**" section exactly as provided at the end
+3. Do not modify, remove, or shorten any of the source URLs
+
+Text to summarize:
+{text}"""
+                elif style == "detailed":
+                    prompt = f"""Provide a detailed summary of the following text (max {max_length} words for the summary content).
+
+IMPORTANT: The text contains source links/citations. Please:
+1. Create a comprehensive summary of the main content  
+2. PRESERVE the complete "📚 **Sources:**" section exactly as provided at the end
+3. Do not modify, remove, or shorten any of the source URLs
+
+Text to summarize:
+{text}"""
+                else:
+                    prompt = f"""Provide a concise summary of the following text (max {max_length} words for the summary content).
+
+IMPORTANT: The text contains source links/citations. Please:
+1. Create a brief summary of the main content
+2. PRESERVE the complete "📚 **Sources:**" section exactly as provided at the end  
+3. Do not modify, remove, or shorten any of the source URLs
+
+Text to summarize:
+{text}"""
             else:
-                prompt = f"Provide a concise summary of the following text (max {max_length} words):\n\n{text}"
+                # Standard summarization without citations
+                if style == "bullet_points":
+                    prompt = f"Summarize the following text in bullet points (max {max_length} words):\n\n{text}"
+                elif style == "detailed":
+                    prompt = f"Provide a detailed summary of the following text (max {max_length} words):\n\n{text}"
+                else:
+                    prompt = f"Provide a concise summary of the following text (max {max_length} words):\n\n{text}"
             
             # Use Azure OpenAI for summarization
             async with httpx.AsyncClient() as client:
@@ -75,7 +112,7 @@ class TextSummarizerConnector(BaseConnector):
                         "messages": [
                             {"role": "user", "content": prompt}
                         ],
-                        "max_tokens": max_length * 2,  # Allow some buffer
+                        "max_tokens": max_length * 3 if has_citations else max_length * 2,  # Extra space for citations
                         "temperature": 0.3
                     },
                     params={"api-version": settings.AZURE_OPENAI_API_VERSION}
@@ -93,7 +130,8 @@ class TextSummarizerConnector(BaseConnector):
                         "summary": summary,
                         "original_length": len(text.split()),
                         "summary_length": len(summary.split()),
-                        "style": style
+                        "style": style,
+                        "preserved_citations": has_citations
                     }
                 )
                 
@@ -106,6 +144,6 @@ class TextSummarizerConnector(BaseConnector):
     async def get_auth_requirements(self) -> AuthRequirements:
         """Text summarizer uses Azure OpenAI, no additional auth needed."""
         return AuthRequirements(
-            auth_type=AuthType.NONE,
-            required_fields=[]
+            type=AuthType.NONE,
+            fields={}
         )

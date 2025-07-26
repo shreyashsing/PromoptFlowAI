@@ -13,10 +13,12 @@ from app.core.exceptions import ConnectorException, AuthenticationException
 
 class PerplexityConnector(BaseConnector):
     """
-    Perplexity AI Connector for real-time web-augmented question answering and grounded search.
+    Perplexity AI Connector for real-time web search, blog discovery, and content analysis.
     
-    Provides access to Perplexity's AI models with real-time web search capabilities,
-    citation support, and various model options for different use cases.
+    Provides access to Perplexity's AI models with real-time web search capabilities for finding
+    recent blog posts, articles, news, and web content. Perfect for discovering the latest blogs
+    from companies like Google, analyzing web content, and getting up-to-date information with
+    citation support and various model options for different use cases.
     """
     
     def _get_connector_name(self) -> str:
@@ -56,16 +58,8 @@ class PerplexityConnector(BaseConnector):
                 "model": {
                     "type": "string",
                     "description": "Perplexity model to use",
-                    "enum": [
-                        "llama-3.1-sonar-small-128k-online",
-                        "llama-3.1-sonar-large-128k-online", 
-                        "llama-3.1-sonar-huge-128k-online",
-                        "llama-3.1-sonar-small-128k-chat",
-                        "llama-3.1-sonar-large-128k-chat",
-                        "llama-3.1-8b-instruct",
-                        "llama-3.1-70b-instruct"
-                    ],
-                    "default": "llama-3.1-sonar-large-128k-online"
+                    "enum": ["sonar"],
+                    "default": "sonar"
                 },
                 # Generation parameters
                 "max_tokens": {
@@ -189,6 +183,34 @@ class PerplexityConnector(BaseConnector):
             ]
         }
     
+    def _validate_and_fix_model(self, model: str) -> str:
+        """
+        Validate and fix model parameter to use current valid models.
+        
+        Args:
+            model: The model name to validate
+            
+        Returns:
+            Valid model name
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Use single model name to avoid API issues
+        valid_models = ["sonar"]
+        
+        logger.info(f"Validating Perplexity model: {model}")
+        
+        # If model is valid, return as-is
+        if model in valid_models:
+            logger.info(f"Model {model} is valid, using as-is")
+            return model
+            
+        # Map all models to single "sonar" model
+        mapped_model = "sonar"
+        logger.info(f"Model {model} mapped to {mapped_model}")
+        return mapped_model
+
     async def execute(self, params: Dict[str, Any], context: ConnectorExecutionContext) -> ConnectorResult:
         """
         Execute Perplexity AI operation with the provided parameters.
@@ -207,6 +229,11 @@ class PerplexityConnector(BaseConnector):
             if not api_key:
                 raise AuthenticationException("Perplexity AI API key not found")
             
+            # Validate and fix model parameter
+            original_model = params.get("model", "sonar")
+            validated_model = self._validate_and_fix_model(original_model)
+            params["model"] = validated_model
+            
             # Route to appropriate action handler
             if action == "chat":
                 result = await self._chat_completion(params, api_key)
@@ -224,7 +251,8 @@ class PerplexityConnector(BaseConnector):
                 data=result,
                 metadata={
                     "action": action,
-                    "model": params.get("model", "llama-3.1-sonar-large-128k-online"),
+                    "model": validated_model,
+                    "original_model": original_model if original_model != validated_model else None,
                     "provider": "perplexity"
                 }
             )
@@ -279,7 +307,7 @@ class PerplexityConnector(BaseConnector):
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "llama-3.1-sonar-small-128k-online",
+                        "model": "sonar",
                         "messages": [{"role": "user", "content": "Hello"}],
                         "max_tokens": 10
                     },
@@ -304,7 +332,7 @@ class PerplexityConnector(BaseConnector):
         
         # Prepare request payload
         request_data = {
-            "model": params.get("model", "llama-3.1-sonar-large-128k-online"),
+            "model": params.get("model", "sonar"),
             "messages": messages,
             "max_tokens": params.get("max_tokens", 1000),
             "temperature": params.get("temperature", 0.2),
@@ -372,10 +400,8 @@ class PerplexityConnector(BaseConnector):
         """Perform web search with Perplexity AI."""
         query = params.get("query") or params.get("messages", [{}])[-1].get("content", "")
         
-        # Use online model for web search
-        model = params.get("model", "llama-3.1-sonar-large-128k-online")
-        if "online" not in model:
-            model = "llama-3.1-sonar-large-128k-online"
+        # Use sonar model for web search
+        model = params.get("model", "sonar")
         
         # Prepare search-optimized request
         messages = [
@@ -422,7 +448,7 @@ class PerplexityConnector(BaseConnector):
         summary_params = {
             **params,
             "messages": messages,
-            "model": params.get("model", "llama-3.1-sonar-large-128k-chat"),
+            "model": params.get("model", "sonar"),
             "temperature": 0.1  # Lower temperature for more consistent summaries
         }
         
@@ -467,7 +493,7 @@ class PerplexityConnector(BaseConnector):
         analysis_params = {
             **params,
             "messages": messages,
-            "model": params.get("model", "llama-3.1-sonar-large-128k-chat"),
+            "model": params.get("model", "sonar"),
             "temperature": 0.2
         }
         
@@ -486,7 +512,7 @@ class PerplexityConnector(BaseConnector):
         return {
             "action": "chat",
             "query": "What are the latest developments in artificial intelligence?",
-            "model": "llama-3.1-sonar-large-128k-online",
+            "model": "sonar",
             "max_tokens": 1000,
             "temperature": 0.2,
             "return_citations": True,
