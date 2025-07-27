@@ -19,7 +19,7 @@ interface ConnectorConfigModalProps {
   isOpen: boolean
   onClose: () => void
   node: WorkflowNode | null
-  onSave: (nodeId: string, parameters: Record<string, any>) => void
+  onSave: (nodeId: string, parameters: Record<string, any>) => Promise<void>
 }
 
 export default function ConnectorConfigModal({ 
@@ -128,10 +128,17 @@ export default function ConnectorConfigModal({
     }
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (node) {
-      onSave(node.id, parameters)
-      onClose()
+      try {
+        await onSave(node.id, parameters)
+        // Show success feedback
+        console.log('Configuration saved successfully')
+        onClose()
+      } catch (error) {
+        console.error('Failed to save configuration:', error)
+        // Don't close modal if save failed
+      }
     }
   }
 
@@ -236,7 +243,8 @@ export default function ConnectorConfigModal({
       
     } catch (error) {
       console.error('Failed to save API key:', error)
-      alert(`Failed to save API key: ${error.message}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      alert(`Failed to save API key: ${errorMessage}`)
     } finally {
       setIsSavingApiKey(false)
     }

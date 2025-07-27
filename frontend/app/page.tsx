@@ -9,7 +9,7 @@ import { ConversationContext, WorkflowPlan, ChatMessage } from '../lib/types'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Separator } from '../components/ui/separator'
-import { Bot, Workflow, Sparkles, Zap, RefreshCw } from 'lucide-react'
+import { Bot, Workflow, Sparkles, Zap, RefreshCw, MessageSquare } from 'lucide-react'
 import { sessionManager } from '../lib/session'
 import { chatAPI, executeWorkflow } from '../lib/api'
 
@@ -22,6 +22,38 @@ export default function Home() {
   useEffect(() => {
     const restoreSession = async () => {
       try {
+        // First check if there's a selected conversation from the chat interface
+        const selectedConversationData = sessionStorage.getItem('selected_conversation')
+        if (selectedConversationData) {
+          try {
+            const selectedConversation = JSON.parse(selectedConversationData)
+            console.log('Loading selected conversation:', selectedConversation.session_id)
+            
+            // Set the conversation context
+            setConversationContext(selectedConversation)
+            
+            // Set the workflow if available
+            if (selectedConversation.current_plan) {
+              setCurrentWorkflow(selectedConversation.current_plan)
+            }
+            
+            // Save to session manager
+            sessionManager.saveSession(selectedConversation.session_id)
+            sessionManager.updateActivity()
+            
+            // Clear the selected conversation from sessionStorage
+            sessionStorage.removeItem('selected_conversation')
+            
+            console.log('Selected conversation loaded successfully')
+            setIsRestoringSession(false)
+            return
+          } catch (error) {
+            console.warn('Failed to parse selected conversation:', error)
+            sessionStorage.removeItem('selected_conversation')
+          }
+        }
+
+        // If no selected conversation, try to restore from session manager
         const sessionData = sessionManager.loadSession()
 
         if (sessionData?.sessionId) {
@@ -136,6 +168,13 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
+                <a 
+                  href="/chat"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  Chat Interface
+                </a>
                 <Badge variant="secondary" className="bg-slate-800/50 text-slate-300 border-slate-700">
                   <Zap className="w-3 h-3 mr-1" />
                   Beta
@@ -166,7 +205,14 @@ export default function Home() {
                       <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center">
                         <Bot className="w-5 h-5 text-white" />
                       </div>
-                      <h2 className="text-xl font-semibold text-white">Workflow Planning Assistant</h2>
+                      <div>
+                        <h2 className="text-xl font-semibold text-white">Workflow Planning Assistant</h2>
+                        {conversationContext && (
+                          <p className="text-sm text-slate-400">
+                            Session: {conversationContext.session_id.slice(0, 8)}...
+                          </p>
+                        )}
+                      </div>
                     </div>
                     {conversationContext && (
                       <Badge variant="secondary" className="bg-green-500/20 text-green-400 border-green-500/30">

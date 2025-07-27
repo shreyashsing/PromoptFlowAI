@@ -14,6 +14,7 @@ from app.connectors.core import (
     PerplexityConnector
 )
 from app.connectors.core.text_summarizer_connector import TextSummarizerConnector
+from app.connectors.core.parallel_execution_connector import ParallelExecutionConnector
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ def register_core_connectors():
         GoogleSheetsConnector,
         WebhookConnector,
         PerplexityConnector,
-        TextSummarizerConnector
+        TextSummarizerConnector,
+        ParallelExecutionConnector
     ]
     
     registered_count = 0

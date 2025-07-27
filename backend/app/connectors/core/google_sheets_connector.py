@@ -295,18 +295,23 @@ class GoogleSheetsConnector(BaseConnector):
                 raise ConnectorException(f"Failed to read data: {response.text}")
             
             result = response.json()
-            return {
+            sheet_data = {
                 "range": result.get("range", range_param),
                 "major_dimension": result.get("majorDimension", major_dimension),
                 "values": result.get("values", []),
                 "row_count": len(result.get("values", [])),
                 "column_count": max(len(row) for row in result.get("values", [])) if result.get("values") else 0
             }
+            
+            # Add 'result' field for easier referencing from other connectors
+            sheet_data["result"] = sheet_data["values"]
+            
+            return sheet_data
     
     async def _write_data(self, params: Dict[str, Any], access_token: str) -> Dict[str, Any]:
-        """Write data to Google Sheets (overwrites existing data)."""
+        """Write data to Google Sheets."""
         spreadsheet_id = params["spreadsheet_id"]
-        range_param = params.get("range", "A1")
+        range_param = params["range"]
         values = params["values"]
         value_input_option = params.get("value_input_option", "USER_ENTERED")
         
@@ -330,18 +335,58 @@ class GoogleSheetsConnector(BaseConnector):
                 raise ConnectorException(f"Failed to write data: {response.text}")
             
             result = response.json()
-            return {
+            write_data = {
                 "spreadsheet_id": result["spreadsheetId"],
                 "updated_range": result["updatedRange"],
                 "updated_rows": result["updatedRows"],
                 "updated_columns": result["updatedColumns"],
                 "updated_cells": result["updatedCells"]
             }
+            
+            # Add 'result' field for easier referencing from other connectors
+            write_data["result"] = f"Successfully wrote {write_data['updated_rows']} rows to {write_data['updated_range']}"
+            
+            return write_data
     
     async def _update_data(self, params: Dict[str, Any], access_token: str) -> Dict[str, Any]:
-        """Update specific cells in Google Sheets."""
-        # For update, we use the same endpoint as write but with different semantics
-        return await self._write_data(params, access_token)
+        """Update data in Google Sheets."""
+        spreadsheet_id = params["spreadsheet_id"]
+        range_param = params["range"]
+        values = params["values"]
+        value_input_option = params.get("value_input_option", "USER_ENTERED")
+        
+        request_body = {
+            "values": values,
+            "majorDimension": params.get("major_dimension", "ROWS")
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_param}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                params={"valueInputOption": value_input_option},
+                json=request_body
+            )
+            
+            if response.status_code != 200:
+                raise ConnectorException(f"Failed to update data: {response.text}")
+            
+            result = response.json()
+            update_data = {
+                "spreadsheet_id": result["spreadsheetId"],
+                "updated_range": result["updatedRange"],
+                "updated_rows": result["updatedRows"],
+                "updated_columns": result["updatedColumns"],
+                "updated_cells": result["updatedCells"]
+            }
+            
+            # Add 'result' field for easier referencing from other connectors
+            update_data["result"] = f"Successfully updated {update_data['updated_rows']} rows in {update_data['updated_range']}"
+            
+            return update_data
     
     async def _append_data(self, params: Dict[str, Any], access_token: str) -> Dict[str, Any]:
         """Append data to Google Sheets."""
@@ -373,7 +418,7 @@ class GoogleSheetsConnector(BaseConnector):
                 raise ConnectorException(f"Failed to append data: {response.text}")
             
             result = response.json()
-            return {
+            append_data = {
                 "spreadsheet_id": result["spreadsheetId"],
                 "table_range": result["tableRange"],
                 "updated_range": result["updates"]["updatedRange"],
@@ -381,6 +426,11 @@ class GoogleSheetsConnector(BaseConnector):
                 "updated_columns": result["updates"]["updatedColumns"],
                 "updated_cells": result["updates"]["updatedCells"]
             }
+            
+            # Add 'result' field for easier referencing from other connectors
+            append_data["result"] = f"Successfully appended {append_data['updated_rows']} rows to {append_data['table_range']}"
+            
+            return append_data
     
     async def _delete_data(self, params: Dict[str, Any], access_token: str) -> Dict[str, Any]:
         """Delete data by clearing the specified range."""

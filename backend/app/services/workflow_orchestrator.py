@@ -27,6 +27,8 @@ from app.core.exceptions import WorkflowException, ConnectorException
 from app.core.database import get_supabase_client
 from app.core.error_utils import handle_database_errors, log_function_performance, ErrorBoundary
 from app.services.auth_tokens import get_auth_token_service
+from app.services.workflow_transformer import WorkflowTransformer
+from app.services.parallel_workflow_executor import ParallelWorkflowExecutor
 from app.models.base import AuthType
 
 
@@ -58,6 +60,8 @@ class WorkflowOrchestrator:
         self.active_executions: Dict[str, ExecutionResult] = {}
         self.triggers: Dict[str, Callable] = {}
         self.checkpointer = MemorySaver()
+        self.transformer = WorkflowTransformer()
+        self.parallel_executor = ParallelWorkflowExecutor()
         
     @handle_database_errors("validate_workflow")
     @log_function_performance("validate_workflow")
@@ -125,8 +129,19 @@ class WorkflowOrchestrator:
         self.active_executions[execution_id] = execution_result
         
         try:
+            # Check if workflow would benefit from parallel execution
+            if self.parallel_executor.should_use_parallel_execution(workflow):
+                logger.info(f"Using parallel execution for workflow {workflow.id}")
+                return await self.parallel_executor.execute_workflow(workflow)
+            
+            # Use LangGraph for simple workflows
+            logger.info(f"Using LangGraph execution for workflow {workflow.id}")
+            
+            # Transform workflow to handle any remaining parallel scenarios
+            transformed_workflow = self.transformer.transform_workflow(workflow)
+            
             # Build LangGraph workflow
-            graph = await self._build_langgraph_workflow(workflow)
+            graph = await self._build_langgraph_workflow(transformed_workflow)
             
             # Initialize workflow state
             initial_state = WorkflowState(
@@ -768,6 +783,8 @@ class WorkflowOrchestrator:
                     graph.add_edge(node.id, "end")
                     added_edges.add(edge_key)
     
+
+    
     def _create_condition_evaluator(self, condition: str) -> Callable:
         """
         Create a condition evaluator function for conditional edges.
@@ -938,8 +955,9 @@ class WorkflowOrchestrator:
                     error=execution_data["error_message"]
                 )
                 
-                # Reconstruct node results from execution log
+                # Reconstruct node results from execution log or result data
                 if execution_data["execution_log"]:
+                    # Original format (LangGraph execution)
                     for log_entry in execution_data["execution_log"]:
                         node_result = NodeExecutionResult(
                             node_id=log_entry["node_id"],
@@ -950,6 +968,20 @@ class WorkflowOrchestrator:
                             started_at=datetime.fromisoformat(log_entry["started_at"]),
                             completed_at=datetime.fromisoformat(log_entry["completed_at"]) if log_entry["completed_at"] else None,
                             duration_ms=log_entry.get("duration_ms")
+                        )
+                        execution_result.node_results.append(node_result)
+                elif execution_data["result"] and "node_results" in execution_data["result"]:
+                    # Parallel execution format
+                    for node_data in execution_data["result"]["node_results"]:
+                        node_result = NodeExecutionResult(
+                            node_id=node_data["node_id"],
+                            connector_name=node_data["connector_name"],
+                            status=ExecutionStatus(node_data["status"]),
+                            result=node_data["result"],
+                            error=node_data.get("error"),
+                            started_at=datetime.fromisoformat(node_data["started_at"]),
+                            completed_at=datetime.fromisoformat(node_data["completed_at"]) if node_data["completed_at"] else None,
+                            duration_ms=node_data.get("duration_ms")
                         )
                         execution_result.node_results.append(node_result)
                 

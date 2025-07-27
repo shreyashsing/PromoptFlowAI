@@ -3,7 +3,7 @@ API endpoints for the conversational agent system.
 Handles prompt submission, chat interactions, and workflow planning.
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
 
@@ -315,17 +315,18 @@ async def confirm_plan(
         )
 
 
-@router.get("/conversations", response_model=Dict[str, Any])
+@router.get("/conversations", response_model=List[Dict[str, Any]])
 async def list_conversations(
-    limit: int = 20,
+    limit: int = 50,
     offset: int = 0,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    agent: ConversationalAgent = Depends(get_conversational_agent)
 ):
     """
-    List user's conversations.
+    List user's conversations with full context.
     
-    This endpoint returns a paginated list of the user's conversation sessions,
-    including basic metadata and current state.
+    This endpoint returns a list of the user's conversation sessions,
+    including messages, current state, and workflow plans.
     """
     try:
         from app.core.database import get_database
@@ -333,28 +334,54 @@ async def list_conversations(
         db = await get_database()
         user_id = current_user["user_id"]
         
-        # Get conversations for the user
-        result = db.table("conversations").select(
-            "session_id", "state", "created_at", "updated_at"
-        ).eq("user_id", user_id).order("updated_at", desc=True).range(offset, offset + limit - 1).execute()
+        # Get conversations for the user with full data
+        result = db.table("conversations").select("*").eq(
+            "user_id", user_id
+        ).order("updated_at", desc=True).range(offset, offset + limit - 1).execute()
         
         conversations = []
         for row in result.data:
+            # Parse messages from JSON
+            messages = []
+            if row.get("messages"):
+                import json
+                try:
+                    messages_data = json.loads(row["messages"]) if isinstance(row["messages"], str) else row["messages"]
+                    for msg_data in messages_data:
+                        messages.append({
+                            "id": msg_data.get("id", ""),
+                            "role": msg_data.get("role", ""),
+                            "content": msg_data.get("content", ""),
+                            "timestamp": msg_data.get("timestamp", ""),
+                            "metadata": msg_data.get("metadata", {})
+                        })
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Failed to parse messages for conversation {row['session_id']}: {e}")
+                    messages = []
+            
+            # Parse current plan from JSON
+            current_plan = None
+            if row.get("current_plan"):
+                import json
+                try:
+                    current_plan = json.loads(row["current_plan"]) if isinstance(row["current_plan"], str) else row["current_plan"]
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Failed to parse current_plan for conversation {row['session_id']}: {e}")
+                    current_plan = None
+            
             conversations.append({
                 "session_id": row["session_id"],
-                "state": row["state"],
+                "user_id": row["user_id"],
+                "messages": messages,
+                "current_plan": current_plan,
+                "state": row.get("state", "initial"),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"]
             })
         
         logger.info(f"Listed {len(conversations)} conversations for user {user_id}")
         
-        return {
-            "conversations": conversations,
-            "total": len(conversations),
-            "limit": limit,
-            "offset": offset
-        }
+        return conversations
         
     except Exception as e:
         logger.error(f"Unexpected error in list_conversations: {e}")
@@ -364,7 +391,7 @@ async def list_conversations(
         )
 
 
-@router.delete("/conversation/{session_id}")
+@router.delete("/conversations/{session_id}")
 async def delete_conversation(
     session_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user)

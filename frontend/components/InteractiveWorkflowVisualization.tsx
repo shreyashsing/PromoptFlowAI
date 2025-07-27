@@ -18,18 +18,19 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { WorkflowPlan, WorkflowNode as WorkflowNodeType } from '@/lib/types'
+import { updateWorkflow, createWorkflow } from '@/lib/api'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import ConnectorConfigModal from './ConnectorConfigModal'
-import { 
-  Workflow, 
-  Play, 
-  Pause, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  GitBranch, 
+import {
+  Workflow,
+  Play,
+  Pause,
+  Clock,
+  CheckCircle,
+  XCircle,
+  GitBranch,
   Layers,
   Settings,
   Trash2,
@@ -53,7 +54,7 @@ interface InteractiveWorkflowVisualizationProps {
 // Custom node component for clean, minimal design
 const CustomWorkflowNode = ({ data, selected }: { data: any, selected: boolean }) => {
   const [isHovered, setIsHovered] = useState(false)
-  
+
   const getConnectorIcon = (connectorName: string) => {
     if (connectorName.includes('gmail')) return '📧'
     if (connectorName.includes('perplexity')) return '🔍'
@@ -63,7 +64,7 @@ const CustomWorkflowNode = ({ data, selected }: { data: any, selected: boolean }
     if (connectorName.includes('summarizer')) return '📝'
     return '⚡'
   }
-  
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-green-500'
@@ -72,23 +73,22 @@ const CustomWorkflowNode = ({ data, selected }: { data: any, selected: boolean }
       default: return 'bg-gray-400'
     }
   }
-  
+
   return (
-    <div 
-      className={`relative bg-white rounded-lg border-2 transition-all duration-200 min-w-[180px] shadow-sm cursor-pointer ${
-        selected 
-          ? 'border-blue-500 shadow-lg' 
-          : isHovered 
-            ? 'border-gray-400 shadow-md' 
-            : 'border-gray-200'
-      }`}
+    <div
+      className={`relative bg-white rounded-lg border-2 transition-all duration-200 min-w-[180px] shadow-sm cursor-pointer ${selected
+        ? 'border-blue-500 shadow-lg'
+        : isHovered
+          ? 'border-gray-400 shadow-md'
+          : 'border-gray-200'
+        }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       title="Click to configure this connector"
     >
       {/* Status indicator */}
       <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full ${getStatusColor(data.status)}`} />
-      
+
       {/* Node content */}
       <div className="p-4">
         <div className="flex items-center gap-3 mb-2">
@@ -97,14 +97,14 @@ const CustomWorkflowNode = ({ data, selected }: { data: any, selected: boolean }
           </div>
           <div className="flex-1">
             <div className="font-medium text-gray-900 text-sm">
-              {data.connector_name.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+              {data.connector_name.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
             </div>
             <div className="text-xs text-gray-500">
               {data.connector_name}
             </div>
           </div>
         </div>
-        
+
         {/* Configuration status */}
         {data.parameters && Object.keys(data.parameters).length > 0 ? (
           <div className="flex items-center gap-1 text-xs text-green-600">
@@ -118,7 +118,7 @@ const CustomWorkflowNode = ({ data, selected }: { data: any, selected: boolean }
           </div>
         )}
       </div>
-      
+
       {/* Hover overlay */}
       {isHovered && (
         <div className="absolute inset-0 bg-blue-50 bg-opacity-50 rounded-lg flex items-center justify-center">
@@ -136,17 +136,17 @@ const nodeTypes = {
   workflowNode: CustomWorkflowNode,
 }
 
-export default function InteractiveWorkflowVisualization({ 
-  workflow, 
+export default function InteractiveWorkflowVisualization({
+  workflow,
   onWorkflowUpdate,
-  onExecuteWorkflow 
+  onExecuteWorkflow
 }: InteractiveWorkflowVisualizationProps) {
   const [isExecuting, setIsExecuting] = useState(false)
   const [executionStatus, setExecutionStatus] = useState<string | null>(null)
   const [selectedNode, setSelectedNode] = useState<string | null>(null)
   const [configModalOpen, setConfigModalOpen] = useState(false)
   const [configNodeId, setConfigNodeId] = useState<string | null>(null)
-  
+
   // Convert workflow data to react-flow format
   const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
     if (!workflow) {
@@ -227,21 +227,21 @@ export default function InteractiveWorkflowVisualization({
 
   const handleExecuteWorkflow = async () => {
     if (!workflow || !onExecuteWorkflow) return
-    
+
     setIsExecuting(true)
     setExecutionStatus('starting')
-    
+
     try {
       const executionResult = await workflowAPI.executeWorkflow(workflow.id)
       const executionId = executionResult.execution_id
-      
+
       setExecutionStatus('running')
-      
+
       // Poll for execution status
       const pollStatus = setInterval(async () => {
         try {
           const status = await workflowAPI.getExecutionStatus(executionId)
-          
+
           // Update node statuses based on execution progress
           if (status.node_results && status.node_results.length > 0) {
             const updatedNodes = nodes.map(node => {
@@ -263,20 +263,32 @@ export default function InteractiveWorkflowVisualization({
             })
             setNodes(updatedNodes)
           }
-          
+
           // Check if execution is complete
           if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
             clearInterval(pollStatus)
             setIsExecuting(false)
             setExecutionStatus(status.status)
-            
+
             if (status.status === 'completed') {
               console.log('Workflow completed successfully!')
             } else if (status.status === 'failed') {
-              console.error('Workflow execution failed:', status.error)
+              // Check for specific error or failed nodes
+              if (status.error) {
+                console.error('Workflow execution failed:', status.error)
+              } else if (status.node_results) {
+                const failedNodes = status.node_results.filter((nr: any) => nr.status === 'failed')
+                if (failedNodes.length > 0) {
+                  console.error('Workflow execution failed: Some nodes failed:', failedNodes.map((n: any) => `${n.connector_name}: ${n.error}`).join(', '))
+                } else {
+                  console.error('Workflow execution failed: Unknown reason')
+                }
+              } else {
+                console.error('Workflow execution failed: Unknown reason')
+              }
             }
           }
-          
+
         } catch (error) {
           console.error('Error polling execution status:', error)
           clearInterval(pollStatus)
@@ -284,7 +296,7 @@ export default function InteractiveWorkflowVisualization({
           setExecutionStatus('failed')
         }
       }, 2000)
-      
+
       // Clear polling after 5 minutes as safety measure
       setTimeout(() => {
         clearInterval(pollStatus)
@@ -293,7 +305,7 @@ export default function InteractiveWorkflowVisualization({
           setExecutionStatus('timeout')
         }
       }, 300000)
-      
+
     } catch (error) {
       console.error('Error executing workflow:', error)
       setIsExecuting(false)
@@ -314,21 +326,128 @@ export default function InteractiveWorkflowVisualization({
     setConfigModalOpen(true);
   }, [])
 
-  const handleConfigSave = useCallback((nodeId: string, config: any) => {
+  const handleConfigSave = useCallback(async (nodeId: string, config: any) => {
     if (!workflow || !onWorkflowUpdate) return;
-    
+
     const updatedWorkflow = {
       ...workflow,
-      nodes: workflow.nodes.map(node => 
-        node.id === nodeId 
+      nodes: workflow.nodes.map(node =>
+        node.id === nodeId
           ? { ...node, parameters: config }
           : node
       )
     };
-    
-    onWorkflowUpdate(updatedWorkflow);
-    setConfigModalOpen(false);
-    setConfigNodeId(null);
+
+    try {
+      // Save to database first
+      if (workflow.id) {
+        console.log('Saving workflow configuration...', workflow.id);
+        
+        await updateWorkflow(workflow.id, updatedWorkflow);
+        console.log('Workflow configuration saved to database successfully');
+        
+        // Show success feedback to user
+        // Create a temporary toast-like notification
+        const notification = document.createElement('div');
+        notification.innerHTML = '✅ Configuration saved successfully!';
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: #10B981;
+          color: white;
+          padding: 12px 20px;
+          border-radius: 8px;
+          z-index: 9999;
+          font-weight: 500;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+          transition: all 0.3s ease;
+        `;
+        document.body.appendChild(notification);
+        setTimeout(() => {
+          notification.style.opacity = '0';
+          setTimeout(() => document.body.removeChild(notification), 300);
+        }, 3000);
+      } else {
+        console.warn('No workflow ID found, skipping database save');
+      }
+      
+      // Update local state regardless of database save status
+      onWorkflowUpdate(updatedWorkflow);
+      setConfigModalOpen(false);
+      setConfigNodeId(null);
+    } catch (error) {
+      console.error('Failed to save workflow configuration:', error);
+      
+      if (error instanceof Error && error.message.includes('404')) {
+        // Workflow not found - try to create it first
+                  console.log('Creating missing workflow...');
+          try {
+            await createWorkflow(updatedWorkflow);
+            await updateWorkflow(workflow.id, updatedWorkflow);
+            console.log('Workflow created and configuration saved');
+          
+          // Show success feedback
+          const notification = document.createElement('div');
+          notification.innerHTML = '✅ Workflow created and configuration saved!';
+          notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10B981;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            z-index: 9999;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+          `;
+          document.body.appendChild(notification);
+          setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => document.body.removeChild(notification), 300);
+          }, 3000);
+          
+          // Update local state
+          onWorkflowUpdate(updatedWorkflow);
+          setConfigModalOpen(false);
+          setConfigNodeId(null);
+          
+        } catch (createError) {
+          console.error('Failed to create workflow:', createError);
+          console.warn('Saving configuration locally only');
+          onWorkflowUpdate(updatedWorkflow);
+          setConfigModalOpen(false);
+          setConfigNodeId(null);
+          
+          // Show warning to user
+          const notification = document.createElement('div');
+          notification.innerHTML = '⚠️ Configuration saved locally (couldn\'t sync to database)';
+          notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #F59E0B;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            z-index: 9999;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+          `;
+          document.body.appendChild(notification);
+          setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => document.body.removeChild(notification), 300);
+          }, 4000);
+        }
+      } else {
+        // Show error feedback for other errors
+        alert('Failed to save configuration. Please try again.');
+      }
+    }
   }, [workflow, onWorkflowUpdate])
 
   const getStatusIcon = (status: string) => {
@@ -363,7 +482,7 @@ export default function InteractiveWorkflowVisualization({
               <GitBranch className="w-4 h-4 text-slate-300" />
             </div>
           </div>
-          
+
           <div className="space-y-2">
             <h3 className="text-xl font-semibold text-slate-300">No workflow yet</h3>
             <p className="text-slate-500 max-w-sm">
@@ -398,19 +517,19 @@ export default function InteractiveWorkflowVisualization({
         className="bg-gray-50"
       >
         <Controls className="bg-white border border-gray-200 rounded-lg shadow-sm" />
-        <MiniMap 
+        <MiniMap
           nodeColor="#3b82f6"
           maskColor="rgba(255, 255, 255, 0.8)"
           position="top-right"
           className="bg-white border border-gray-200 rounded-lg shadow-sm"
         />
-        <Background 
-          variant={BackgroundVariant.Dots} 
-          gap={20} 
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={20}
           size={1}
           color="#e5e7eb"
         />
-        
+
         {/* Clean Control Panel */}
         <Panel position="top-left">
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 min-w-[280px]">
@@ -423,13 +542,12 @@ export default function InteractiveWorkflowVisualization({
                 <p className="text-sm text-gray-500">Workflow automation</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2 mb-4">
-              <div className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${
-                workflow.status === 'active' ? 'bg-green-100 text-green-800' :
+              <div className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${workflow.status === 'active' ? 'bg-green-100 text-green-800' :
                 workflow.status === 'paused' ? 'bg-yellow-100 text-yellow-800' :
-                'bg-gray-100 text-gray-800'
-              }`}>
+                  'bg-gray-100 text-gray-800'
+                }`}>
                 {getStatusIcon(workflow.status)}
                 {workflow.status}
               </div>
@@ -439,9 +557,9 @@ export default function InteractiveWorkflowVisualization({
                 </div>
               )}
             </div>
-            
+
             <div className="flex items-center gap-2">
-              <button 
+              <button
                 onClick={handleExecuteWorkflow}
                 disabled={isExecuting || workflow.status !== 'active'}
                 className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
@@ -453,7 +571,7 @@ export default function InteractiveWorkflowVisualization({
                 )}
                 {isExecuting ? 'Running...' : 'Execute'}
               </button>
-              
+
               <button className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 <Settings className="w-4 h-4 text-gray-600" />
               </button>
@@ -461,7 +579,7 @@ export default function InteractiveWorkflowVisualization({
           </div>
         </Panel>
       </ReactFlow>
-      
+
       {/* Configuration Modal */}
       {configModalOpen && configNodeId && workflow && (
         <ConnectorConfigModal
@@ -471,8 +589,8 @@ export default function InteractiveWorkflowVisualization({
             setConfigNodeId(null);
           }}
           node={workflow.nodes.find(n => n.id === configNodeId) || null}
-          onSave={(nodeId: string, parameters: Record<string, any>) => {
-            handleConfigSave(nodeId, parameters);
+          onSave={async (nodeId: string, parameters: Record<string, any>) => {
+            await handleConfigSave(nodeId, parameters);
           }}
         />
       )}
