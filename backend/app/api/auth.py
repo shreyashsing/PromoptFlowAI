@@ -333,12 +333,21 @@ class OAuthCallbackRequest(BaseModel):
     connector_name: str
 
 
+
 @router.post("/oauth/initiate")
 async def initiate_oauth(
     request: OAuthInitiateRequest,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Initiate OAuth flow for a connector."""
+    """Initiate OAuth flow for a connector via POST request."""
+    return await initiate_oauth_impl(request, current_user)
+
+
+async def initiate_oauth_impl(
+    request: OAuthInitiateRequest,
+    current_user: Dict[str, Any]
+):
+    """Implementation of OAuth initiation logic."""
     try:
         if request.connector_name in ["gmail_connector", "google_sheets"]:
             # Google OAuth configuration (works for both Gmail and Sheets)

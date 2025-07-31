@@ -11,12 +11,16 @@ from app.core.database import init_database, close_database
 from app.api.auth import router as auth_router
 from app.api.rag import router as rag_router
 from app.api.agent import router as agent_router
+from app.api.react_agent import router as react_agent_router
 from app.api.workflows import router as workflows_router
+from app.api.workflows_react import router as workflows_react_router
 from app.api.executions import router as executions_router
 from app.api.triggers import router as triggers_router
+from app.api.monitoring import router as monitoring_router
 from app.services.rag import init_rag_system
-from app.services.conversational_agent import init_conversational_agent
+# Removed old conversational agent - now using True ReAct Agent
 from app.services.trigger_system import get_trigger_system
+from app.services.monitoring_service import monitoring_service
 from app.connectors.core.register import register_core_connectors
 
 # Import new error handling and logging systems
@@ -43,9 +47,8 @@ async def lifespan(app: FastAPI):
         await init_rag_system()
         logger.info("RAG system initialized successfully")
         
-        # Initialize conversational agent
-        await init_conversational_agent()
-        logger.info("Conversational agent initialized successfully")
+        # True ReAct Agent initializes on-demand
+        logger.info("True ReAct Agent system ready")
         
         # Register core connectors
         registration_result = register_core_connectors()
@@ -55,7 +58,15 @@ async def lifespan(app: FastAPI):
         trigger_system = await get_trigger_system()
         logger.info("Trigger system initialized successfully")
         
+        # Initialize monitoring service
+        await monitoring_service.start()
+        logger.info("Monitoring service initialized successfully")
+        
         yield
+        
+        # Shutdown monitoring service
+        await monitoring_service.stop()
+        logger.info("Monitoring service stopped")
         
         # Shutdown trigger system
         await trigger_system.stop()
@@ -108,9 +119,12 @@ def create_application() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(rag_router, prefix="/api/v1")
     app.include_router(agent_router, prefix="/api/v1")
+    app.include_router(react_agent_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
+    app.include_router(workflows_react_router, prefix="/api/v1")
     app.include_router(executions_router, prefix="/api/v1")
     app.include_router(triggers_router, prefix="/api/v1")
+    app.include_router(monitoring_router, prefix="/api/v1")
 
     return app
 

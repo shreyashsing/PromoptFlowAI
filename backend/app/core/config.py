@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     AZURE_OPENAI_DEPLOYMENT_NAME: str = "gpt-4.1"
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT: str = "text-embedding-3-small"
     
+    # ReAct Agent settings
+    USE_REACT_AGENT: bool = True  # Enable ReAct agent by default
+    REACT_AGENT_FALLBACK: bool = True  # Enable fallback to original agent
+    REACT_AGENT_MAX_ITERATIONS: int = 10  # Maximum reasoning iterations
+    
     # Security settings
     SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

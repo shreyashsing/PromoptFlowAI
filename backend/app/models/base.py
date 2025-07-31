@@ -28,6 +28,7 @@ class ConversationState(str, Enum):
     """Conversation state for planning."""
     INITIAL = "initial"
     PLANNING = "planning"
+    CONFIGURING = "configuring"  # Added for ReAct workflow building
     CONFIRMING = "confirming"
     APPROVED = "approved"
     EXECUTING = "executing"

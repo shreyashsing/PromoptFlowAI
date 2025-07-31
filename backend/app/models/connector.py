@@ -39,7 +39,8 @@ class ConnectorMetadata(BaseModel):
 class ConnectorExecutionContext(BaseModel):
     """Context for connector execution."""
     user_id: str
-    workflow_id: str
-    node_id: str
     auth_tokens: Dict[str, str] = Field(default_factory=dict)
+    request_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    node_id: Optional[str] = None
     previous_results: Dict[str, Any] = Field(default_factory=dict)

@@ -22,7 +22,7 @@ import { updateWorkflow, createWorkflow } from '@/lib/api'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import ConnectorConfigModal from './ConnectorConfigModal'
+import { ConnectorConfigModal } from './ConnectorConfigModal'
 import {
   Workflow,
   Play,
@@ -588,9 +588,9 @@ export default function InteractiveWorkflowVisualization({
             setConfigModalOpen(false);
             setConfigNodeId(null);
           }}
-          node={workflow.nodes.find(n => n.id === configNodeId) || null}
-          onSave={async (nodeId: string, parameters: Record<string, any>) => {
-            await handleConfigSave(nodeId, parameters);
+          connectorName={workflow.nodes.find(n => n.id === configNodeId)?.connector_name || null}
+          onSave={async (config: any) => {
+            await handleConfigSave(configNodeId, config);
           }}
         />
       )}

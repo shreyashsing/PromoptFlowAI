@@ -305,3 +305,59 @@ class ConfigurationException(PromptFlowException):
     
     def _generate_user_message(self) -> str:
         return "Configuration error detected. Please contact support for assistance."
+
+
+class AgentExecutionError(PromptFlowException):
+    """Exception raised during ReAct agent execution."""
+    
+    def __init__(self, message: str, **kwargs):
+        kwargs.setdefault('category', ErrorCategory.SYSTEM)
+        kwargs.setdefault('retryable', True)
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return "The AI agent encountered an error while processing your request. Please try again."
+
+
+class ToolExecutionError(PromptFlowException):
+    """Exception raised during tool execution in ReAct agent."""
+    
+    def __init__(self, message: str, tool_name: str = None, **kwargs):
+        kwargs.setdefault('category', ErrorCategory.CONNECTOR)
+        kwargs.setdefault('retryable', True)
+        self.tool_name = tool_name
+        super().__init__(message, **kwargs)
+        if tool_name:
+            self.details['tool_name'] = tool_name
+    
+    def _generate_user_message(self) -> str:
+        if self.tool_name:
+            return f"There was an issue executing the {self.tool_name} tool. Please try again."
+        return "There was an issue executing a tool. Please try again."
+
+
+class ToolRegistrationError(PromptFlowException):
+    """Exception raised during tool registration for ReAct agent."""
+    
+    def __init__(self, message: str, **kwargs):
+        kwargs.setdefault('category', ErrorCategory.SYSTEM)
+        kwargs.setdefault('severity', ErrorSeverity.HIGH)
+        super().__init__(message, **kwargs)
+    
+    def _generate_user_message(self) -> str:
+        return "There was an issue setting up the AI tools. Please contact support."
+
+
+class ConversationError(PromptFlowException):
+    """Exception raised during conversation management."""
+    
+    def __init__(self, message: str, session_id: str = None, **kwargs):
+        kwargs.setdefault('category', ErrorCategory.SYSTEM)
+        kwargs.setdefault('retryable', True)
+        self.session_id = session_id
+        super().__init__(message, **kwargs)
+        if session_id:
+            self.details['session_id'] = session_id
+    
+    def _generate_user_message(self) -> str:
+        return "There was an issue with your conversation session. Please try starting a new conversation."

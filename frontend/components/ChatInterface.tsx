@@ -1,280 +1,523 @@
-'use client'
+"use client";
 
-import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, Bot, User, Sparkles, MessageSquare, Zap } from 'lucide-react'
-import { ConversationContext, WorkflowPlan } from '../lib/types'
-import { chatAPI } from '../lib/api'
-import { validateMessage } from '../lib/validation'
-import { Button } from '../components/ui/button'
-import { Textarea } from '../components/ui/textarea'
-import { Card } from '../components/ui/card'
-import { Badge } from '../components/ui/badge'
-import { ScrollArea } from '../components/ui/scroll-area'
-import WorkflowExecutionStatus from './WorkflowExecutionStatus'
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { 
+  Send, 
+  User, 
+  Bot, 
+  Settings,
+  Activity,
+  MessageSquare,
+  Loader2,
+  AlertCircle,
+  CheckCircle,
+  Brain
+} from 'lucide-react';
 
-interface ChatInterfaceProps {
-  conversationContext: ConversationContext | null
-  setConversationContext: (context: ConversationContext) => void
-  setCurrentWorkflow: (workflow: WorkflowPlan | null) => void
+// Import our new components
+import { ReactAgentWorkflowVisualization } from './ReactAgentWorkflowVisualization';
+import { ConnectorConfigModal } from './ConnectorConfigModal';
+import { useAuth } from '@/lib/auth-context';
+
+interface Message {
+  id: string;
+  content: string;
+  role: 'user' | 'assistant';
+  timestamp: string;
+  metadata?: {
+    reasoning_trace?: Array<{
+      step_number: number;
+      thought: string;
+      action: string;
+      action_input: any;
+      observation: string;
+    }>;
+    tool_calls?: Array<{
+      tool_name: string;
+      input: string;
+      output: string;
+    }>;
+    execution_time?: number;
+  };
 }
 
-export default function ChatInterface({ 
-  conversationContext, 
-  setConversationContext, 
-  setCurrentWorkflow 
-}: ChatInterfaceProps) {
-  const [message, setMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [executionId, setExecutionId] = useState<string | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+interface ConversationHistory {
+  id: string;
+  title: string;
+  updated_at: string;
+  message_count: number;
+}
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+interface ChatInterfaceProps {
+  mode: 'react' | 'conversational';
+}
+
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ mode }) => {
+  const { session, user, loading } = useAuth();
+  
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [conversations, setConversations] = useState<ConversationHistory[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('chat');
+  const [selectedConnector, setSelectedConnector] = useState<string | null>(null);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when new messages arrive
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   useEffect(() => {
-    scrollToBottom()
-  }, [conversationContext?.messages])
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    const validation = validateMessage(message)
-    if (!validation.isValid) {
-      setError(validation.errors[0])
-      return
+  // Load conversations on mount when authenticated
+  useEffect(() => {
+    if (session?.access_token) {
+      loadConversations();
     }
+  }, [mode, session]);
 
-    setIsLoading(true)
-    setError(null)
+  const loadConversations = async () => {
+    try {
+      if (!session?.access_token) return;
+      const token = session.access_token;
+
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const endpoint = mode === 'react' ? `${baseUrl}/api/v1/react/conversations` : `${baseUrl}/api/v1/agent/conversations`;
+      
+      const response = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setConversations(data.conversations || []);
+      }
+    } catch (error) {
+      console.error('Failed to load conversations:', error);
+    }
+  };
+
+  const createNewConversation = () => {
+    setMessages([]);
+    setCurrentSessionId(null);
+  };
+
+  const loadConversation = async (conversationId: string) => {
+    try {
+      if (!session?.access_token) return;
+      const token = session.access_token;
+
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const endpoint = mode === 'react' 
+        ? `${baseUrl}/api/v1/react/conversations/${conversationId}`
+        : `${baseUrl}/api/v1/agent/conversations/${conversationId}`;
+      
+      const response = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMessages(data.messages || []);
+        setCurrentSessionId(conversationId);
+      }
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: input,
+      role: 'user',
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
 
     try {
-      let response
+      if (!session?.access_token) throw new Error('No authentication token');
+      const token = session.access_token;
+
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const endpoint = mode === 'react' ? `${baseUrl}/api/v1/react/chat` : `${baseUrl}/api/v1/agent/chat-agent`;
       
-      if (conversationContext?.session_id) {
-        // Continue existing conversation
-        response = await chatAPI.sendMessage({
-          message: message.trim(),
-          session_id: conversationContext.session_id
-        })
-      } else {
-        // Start new conversation
-        response = await chatAPI.startNewConversation({
-          prompt: message.trim()
-        })
+      const requestBody = mode === 'react' 
+        ? {
+            query: input,
+            session_id: currentSessionId,
+            max_iterations: 10,
+          }
+        : {
+            message: input,
+            session_id: currentSessionId,
+          };
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
       }
 
-      // Create a new message for the user
-      const userMessage = {
-        id: Date.now().toString() + '-user',
-        role: 'user' as const,
-        content: message.trim(),
-        timestamp: new Date().toISOString()
-      }
+      const data = await response.json();
 
-      // Create a new message for the assistant
-      const assistantMessage = {
-        id: Date.now().toString() + '-assistant', 
-        role: 'assistant' as const,
-        content: response.message,
-        timestamp: new Date().toISOString()
-      }
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: data.response || data.message || 'No response received',
+        role: 'assistant',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reasoning_trace: data.reasoning_trace,
+          tool_calls: data.tool_calls,
+          execution_time: data.execution_time_ms,
+        },
+      };
 
-      // Update conversation context with new messages
-      const updatedContext: ConversationContext = {
-        session_id: response.session_id,
-        user_id: response.conversation_context?.user_id || '00000000-0000-0000-0000-000000000001',
-        messages: [
-          ...(conversationContext?.messages || []),
-          userMessage,
-          assistantMessage
-        ],
-        current_plan: response.current_plan,
-        state: response.conversation_state as any,
-        created_at: conversationContext?.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-
-      setConversationContext(updatedContext)
+      setMessages(prev => [...prev, assistantMessage]);
       
-      // Update workflow if one was generated
-      if (response.current_plan) {
-        setCurrentWorkflow(response.current_plan)
+      // Update session ID if this was a new conversation
+      if (!currentSessionId && data.session_id) {
+        setCurrentSessionId(data.session_id);
+        loadConversations(); // Refresh conversation list
       }
 
-      // Check if response contains execution ID (workflow was executed)
-      const executionIdMatch = response.message.match(/Execution ID: `([^`]+)`/)
-      if (executionIdMatch) {
-        setExecutionId(executionIdMatch[1])
-      }
-
-      setMessage('')
-    } catch (err: any) {
-      console.error('Chat error:', err)
-      if (err.message && err.message.includes('Failed to fetch')) {
-        setError('Backend server is not running. Please start the backend server at http://localhost:8000')
-      } else {
-        setError(err.response?.data?.detail || 'Failed to send message. Please try again.')
-      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
+        role: 'assistant',
+        timestamp: new Date().toISOString(),
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit(e as any)
+      e.preventDefault();
+      sendMessage();
     }
+  };
+
+  const handleConnectorConfigure = (connectorName: string) => {
+    setSelectedConnector(connectorName);
+    setIsConfigModalOpen(true);
+  };
+
+  const handleConnectorSave = async (config: any) => {
+    try {
+      if (!session?.access_token) throw new Error('No authentication token');
+      const token = session.access_token;
+
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/api/v1/connectors/${config.name}/configure`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save connector configuration');
+      }
+
+      // Configuration saved successfully
+      console.log('Connector configuration saved');
+    } catch (error) {
+      console.error('Failed to save connector configuration:', error);
+    }
+  };
+
+  const formatTimestamp = (timestamp: string) => {
+    return new Date(timestamp).toLocaleTimeString();
+  };
+
+  // Show loading state while authentication is being checked
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
-  const examplePrompts = [
-    "Send me an email when someone fills out my contact form",
-    "Update a Google Sheet when I receive a payment",
-    "Post to Slack when a new GitHub issue is created",
-    "Create a task in Notion when I get a new lead"
-  ]
+  // Show auth required message if not authenticated
+  if (!session || !user) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <AlertCircle className="w-8 h-8 text-yellow-500 mx-auto mb-4" />
+          <p className="text-gray-600 mb-4">Please sign in to access the chat interface</p>
+          <Button onClick={() => window.location.href = '/auth'}>
+            Sign In
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-16rem)]">
-      {/* Messages */}
-      <ScrollArea className="flex-1 p-6 custom-scrollbar">
-        {!conversationContext?.messages?.length ? (
-          <div className="flex flex-col items-center justify-center h-full text-center space-y-6">
-            <div className="relative">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4">
-                <Sparkles className="w-10 h-10 text-white" />
-              </div>
-              <div className="absolute -top-2 -right-2 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                <Zap className="w-3 h-3 text-white" />
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <h3 className="text-2xl font-bold text-white glow-text">Welcome to PromptFlow AI!</h3>
-              <p className="text-slate-400 max-w-md">
-                Describe what you'd like to automate and I'll help you build a powerful workflow in seconds.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 w-full max-w-md">
-              <p className="text-sm font-medium text-slate-300 mb-2">Try something like:</p>
-              {examplePrompts.map((prompt, index) => (
-                <Card 
-                  key={index}
-                  className="p-3 bg-slate-800/50 border-slate-700/50 hover:bg-slate-700/50 transition-all cursor-pointer group"
-                  onClick={() => setMessage(prompt)}
-                >
-                  <div className="flex items-start space-x-2">
-                    <MessageSquare className="w-4 h-4 text-blue-400 mt-0.5 group-hover:text-blue-300" />
-                    <p className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                      "{prompt}"
-                    </p>
-                  </div>
-                </Card>
-              ))}
-            </div>
+    <div className="flex h-full">
+      {/* Sidebar - Conversations */}
+      <div className="w-80 border-r bg-gray-50 flex flex-col">
+        <div className="p-4 border-b">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">
+              {mode === 'react' ? 'ReAct Agent' : 'Conversational AI'}
+            </h2>
+            <Badge variant={mode === 'react' ? 'default' : 'secondary'}>
+              {mode === 'react' ? 'ReAct' : 'Chat'}
+            </Badge>
           </div>
-        ) : (
-          <div className="space-y-6">
-            {conversationContext.messages.map((msg) => (
+          
+          <Button onClick={createNewConversation} className="w-full">
+            New Conversation
+          </Button>
+        </div>
+
+        <ScrollArea className="flex-1">
+          <div className="p-4 space-y-2">
+            {conversations.map((conversation) => (
               <div
-                key={msg.id}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                key={conversation.id}
+                onClick={() => loadConversation(conversation.id)}
+                className={`
+                  p-3 rounded-lg cursor-pointer transition-colors
+                  ${currentSessionId === conversation.id 
+                    ? 'bg-blue-100 border border-blue-200' 
+                    : 'bg-white hover:bg-gray-100 border border-gray-200'
+                  }
+                `}
               >
-                <div className={`flex items-start space-x-3 max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                  {/* Avatar */}
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    msg.role === 'user' 
-                      ? 'bg-gradient-to-br from-blue-500 to-cyan-500' 
-                      : 'bg-gradient-to-br from-purple-500 to-pink-500'
-                  }`}>
-                    {msg.role === 'user' ? (
-                      <User className="w-4 h-4 text-white" />
-                    ) : (
-                      <Bot className="w-4 h-4 text-white" />
-                    )}
-                  </div>
-                  
-                  {/* Message */}
-                  <Card className={`p-4 ${
-                    msg.role === 'user'
-                      ? 'bg-gradient-to-br from-blue-600 to-blue-700 border-blue-500/50 text-white'
-                      : 'bg-slate-800/50 border-slate-700/50 text-slate-100'
-                  }`}>
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                    
-                    {/* Show execution status if this message contains execution info */}
-                    {msg.role === 'assistant' && executionId && msg.content.includes('Execution ID:') && (
-                      <WorkflowExecutionStatus 
-                        executionId={executionId}
-                        workflowName={conversationContext?.current_plan?.name || 'Workflow'}
-                        onStatusUpdate={(status) => {
-                          console.log('Execution status updated:', status)
-                        }}
-                      />
-                    )}
-                    
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10">
-                      <p className="text-xs opacity-70">
-                        {new Date(msg.timestamp).toLocaleTimeString()}
-                      </p>
-                      {msg.role === 'assistant' && (
-                        <Badge variant="secondary" className="bg-white/10 text-white/80 text-xs">
-                          AI
-                        </Badge>
-                      )}
-                    </div>
-                  </Card>
+                <div className="font-medium text-sm text-gray-900 truncate">
+                  {conversation.title}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {conversation.message_count} messages • {formatTimestamp(conversation.updated_at)}
                 </div>
               </div>
             ))}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </ScrollArea>
-
-      {/* Input Form */}
-      <div className="p-6 border-t border-slate-700/50">
-        {error && (
-          <Card className="mb-4 p-3 bg-red-900/20 border-red-500/50">
-            <p className="text-red-400 text-sm">{error}</p>
-          </Card>
-        )}
-        
-        <form onSubmit={handleSubmit} className="flex gap-3">
-          <div className="flex-1">
-            <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Describe your automation needs..."
-              className="min-h-[60px] bg-slate-800/50 border-slate-700/50 text-white placeholder:text-slate-400 focus:border-blue-500/50 focus:ring-blue-500/20 resize-none"
-              disabled={isLoading}
-            />
-          </div>
-          <Button
-            type="submit"
-            disabled={isLoading || !message.trim()}
-            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 h-[60px] glow-border"
-          >
-            {isLoading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Send className="w-5 h-5" />
+            
+            {conversations.length === 0 && (
+              <div className="text-center text-gray-500 py-8">
+                <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No conversations yet</p>
+              </div>
             )}
-          </Button>
-        </form>
-        
-        <div className="text-xs text-slate-500 mt-3 flex items-center space-x-4">
-          <span>Press Enter to send, Shift+Enter for new line</span>
-          <Badge variant="outline" className="border-slate-700 text-slate-400">
-            <Zap className="w-3 h-3 mr-1" />
-            AI Powered
-          </Badge>
-        </div>
+          </div>
+        </ScrollArea>
       </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+          <div className="border-b">
+            <TabsList className="w-full justify-start h-auto p-0 bg-transparent">
+              <TabsTrigger 
+                value="chat" 
+                className="flex items-center gap-2 px-4 py-3 data-[state=active]:bg-blue-50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Chat
+              </TabsTrigger>
+              
+              {mode === 'react' && (
+                <TabsTrigger 
+                  value="workflow" 
+                  className="flex items-center gap-2 px-4 py-3 data-[state=active]:bg-blue-50 data-[state=active]:border-b-2 data-[state=active]:border-blue-500"
+                >
+                  <Activity className="h-4 w-4" />
+                  Workflow
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+
+          <TabsContent value="chat" className="flex-1 flex flex-col m-0 p-0">
+            {/* Messages Area */}
+            <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
+              <div className="space-y-4 max-w-4xl mx-auto">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`
+                        max-w-[80%] rounded-lg px-4 py-3 space-y-2
+                        ${message.role === 'user'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-900 border'
+                        }
+                      `}
+                    >
+                      <div className="flex items-start gap-2">
+                        {message.role === 'user' ? (
+                          <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        )}
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="whitespace-pre-wrap break-words">
+                            {message.content}
+                          </div>
+                          
+                          {/* Metadata for assistant messages */}
+                          {message.role === 'assistant' && message.metadata && (
+                            <div className="mt-3 space-y-2">
+                              {message.metadata.execution_time && (
+                                <div className="text-xs opacity-75">
+                                  Execution time: {(message.metadata.execution_time / 1000).toFixed(2)}s
+                                </div>
+                              )}
+                              
+                              {message.metadata.tool_calls && message.metadata.tool_calls.length > 0 && (
+                                <div className="space-y-1">
+                                  <div className="text-xs font-medium opacity-75">Tools used:</div>
+                                  {message.metadata.tool_calls.map((tool, index) => (
+                                    <Badge key={index} variant="outline" className="text-xs">
+                                      {tool.tool_name}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="text-xs opacity-60">
+                        {formatTimestamp(message.timestamp)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 rounded-lg px-4 py-3 border">
+                      <div className="flex items-center gap-2">
+                        <Bot className="h-4 w-4" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span className="text-sm text-gray-600">
+                          {mode === 'react' ? 'Agent is thinking...' : 'Generating response...'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                <div ref={messagesEndRef} />
+              </div>
+            </ScrollArea>
+
+            {/* Input Area */}
+            <div className="border-t p-4">
+              <div className="max-w-4xl mx-auto">
+                <div className="flex gap-2">
+                  <Textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyPress}
+                    placeholder={
+                      mode === 'react' 
+                        ? "Ask the ReAct agent to help you with workflows..." 
+                        : "Type your message..."
+                    }
+                    className="flex-1 min-h-[60px] max-h-[120px] resize-none"
+                    disabled={isLoading}
+                  />
+                  <Button
+                    onClick={sendMessage}
+                    disabled={!input.trim() || isLoading}
+                    size="lg"
+                    className="px-6"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                
+                {mode === 'react' && (
+                  <div className="text-xs text-gray-500 mt-2">
+                    The ReAct agent can plan and execute multi-step workflows using available connectors.
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {mode === 'react' && (
+            <TabsContent value="workflow" className="flex-1 m-0 p-4">
+              <div className="max-w-6xl mx-auto">
+                <ReactAgentWorkflowVisualization
+                  sessionId={currentSessionId || ''}
+                  isActive={currentSessionId !== null}
+                  onConfigureConnector={handleConnectorConfigure}
+                />
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
+      </div>
+
+      {/* Connector Configuration Modal */}
+      <ConnectorConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => {
+          setIsConfigModalOpen(false);
+          setSelectedConnector(null);
+        }}
+        connectorName={selectedConnector}
+        onSave={handleConnectorSave}
+      />
     </div>
-  )
-}
+  );
+};

@@ -1,440 +1,282 @@
 """
-API endpoints for the conversational agent system.
-Handles prompt submission, chat interactions, and workflow planning.
+Clean API endpoints for the True ReAct Agent system.
+Only includes working endpoints without old conversational agent dependencies.
 """
 import logging
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
+import json
+import time
 
-from app.services.conversational_agent import (
-    get_conversational_agent,
-    ConversationalAgent
-)
-from app.models.conversation import (
-    ConversationContext,
-    PlanModificationRequest,
-    PlanConfirmationRequest
-)
-from app.models.base import WorkflowPlan
+from app.services.integrated_workflow_agent import IntegratedWorkflowAgent
+from app.services.true_react_agent import TrueReActAgent
+from app.services.react_ui_manager import ReActUIManager
+from app.services.react_agent_service import get_react_agent_service
+from app.models.conversation import ConversationContext
+from app.models.base import WorkflowPlan, ConversationState
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.exceptions import AgentError, PlanningError
 from app.core.error_handler import handle_api_error
 from app.core.error_utils import ErrorBoundary, create_error_context
 from app.core.monitoring import record_request_time
-import time
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+# Request/Response Models
+class WorkflowBuildRequest(BaseModel):
+    query: str = Field(..., description="User's workflow request")
+    session_id: Optional[str] = Field(None, description="Session ID for continuation")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
 
-# Request/Response models
+class WorkflowBuildResponse(BaseModel):
+    message: str
+    session_id: str
+    conversation_state: str
+    workflow_plan: Optional[Dict[str, Any]] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    next_steps: List[str] = []
 
-class PromptRequest(BaseModel):
-    """Request model for initial prompt submission."""
-    prompt: str = Field(..., min_length=1, max_length=2000, description="User's natural language prompt")
-    session_id: Optional[str] = Field(None, description="Optional existing session ID")
+class ContinueWorkflowRequest(BaseModel):
+    message: str = Field(..., description="User's response or input")
+    session_id: str = Field(..., description="Session ID to continue")
 
+class TrueReActRequest(BaseModel):
+    query: str = Field(..., description="User's workflow request")
+    session_id: Optional[str] = Field(None, description="Session ID for continuation")
 
-class ChatRequest(BaseModel):
-    """Request model for chat interactions."""
-    message: str = Field(..., min_length=1, max_length=1000, description="User's message")
-    session_id: str = Field(..., description="Session ID for the conversation")
+class TrueReActResponse(BaseModel):
+    success: bool
+    session_id: str
+    message: str
+    workflow: Optional[Dict[str, Any]] = None
+    reasoning_trace: List[str] = []
+    ui_updates: List[Dict[str, Any]] = []
+    error: Optional[str] = None
 
+# Working Endpoints
 
-class AgentResponse(BaseModel):
-    """Response model for agent interactions."""
-    message: str = Field(..., description="Agent's response message")
-    session_id: str = Field(..., description="Session ID")
-    conversation_state: str = Field(..., description="Current conversation state")
-    current_plan: Optional[WorkflowPlan] = Field(None, description="Current workflow plan if available")
-
-
-class PlanModificationResponse(BaseModel):
-    """Response model for plan modifications."""
-    modified_plan: WorkflowPlan = Field(..., description="Modified workflow plan")
-    explanation: str = Field(..., description="Explanation of changes made")
-    session_id: str = Field(..., description="Session ID")
-
-
-# API Endpoints
-
-@router.get("/conversations/{session_id}", response_model=Dict[str, Any])
-async def get_conversation(
-    session_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
+@router.post("/build-workflow", response_model=WorkflowBuildResponse)
+async def build_workflow_with_react(
+    request: WorkflowBuildRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Load conversation context by session ID.
-    
-    This endpoint retrieves the conversation history, current workflow plan,
-    and conversation state for a given session.
+    Build workflow using ReAct methodology with integrated workflow agent.
     """
+    start_time = time.time()
+    
     try:
-        logger.info(f"GET conversation request for session: {session_id}, user: {current_user.get('user_id', 'UNKNOWN')}")
+        logger.info(f"Starting ReAct workflow building for user {current_user['user_id']}: {request.query}")
         
-        # Load conversation context from database
-        context = await agent._load_conversation_context(session_id)
+        # Initialize integrated workflow agent
+        agent = IntegratedWorkflowAgent()
+        await agent.initialize()
         
-        if not context:
-            logger.warning(f"Conversation not found in database: {session_id}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Conversation {session_id} not found"
-            )
+        # Create conversation context
+        conversation_context = ConversationContext(
+            session_id=request.session_id or f"session_{int(time.time())}",
+            user_id=current_user['user_id'],
+            messages=[request.query],
+            state=ConversationState.PLANNING,
+            context=request.context or {}
+        )
         
-        # Verify the conversation belongs to the current user
-        if context.user_id != current_user["user_id"]:
-            logger.warning(f"Access denied: conversation {session_id} belongs to {context.user_id}, not {current_user['user_id']}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this conversation"
-            )
+        # Build workflow conversationally
+        response_message, workflow_plan = await agent.create_workflow_conversationally(
+            request.query, conversation_context
+        )
         
-        logger.info(f"Successfully retrieved conversation: {session_id} for user {current_user['user_id']}")
+        duration = time.time() - start_time
+        record_request_time(duration)
         
-        # Convert to response format
-        return {
-            "session_id": context.session_id,
-            "user_id": context.user_id,
-            "messages": [
-                {
-                    "id": msg.id,
-                    "role": msg.role,
-                    "content": msg.content,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "metadata": msg.metadata
-                } for msg in context.messages
-            ],
-            "current_plan": context.current_plan.dict() if context.current_plan else None,
-            "state": context.state.value,
-            "created_at": context.created_at.isoformat(),
-            "updated_at": context.updated_at.isoformat()
-        }
+        logger.info(f"Started ReAct workflow building for session {conversation_context.session_id} in {duration:.3f}s")
         
-    except HTTPException:
-        raise
+        return WorkflowBuildResponse(
+            message=response_message,
+            session_id=conversation_context.session_id,
+            conversation_state=conversation_context.state.value,
+            workflow_plan=workflow_plan.dict() if workflow_plan else None,
+            reasoning={"processing_time_ms": int(duration * 1000)},
+            next_steps=["Continue conversation", "Approve plan", "Request modifications"]
+        )
+        
     except Exception as e:
-        logger.error(f"Error loading conversation {session_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to load conversation"
-        )
-
-
-@router.post("/run-agent", response_model=AgentResponse)
-async def run_agent(
-    request: PromptRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
-):
-    """
-    Process initial user prompt and start conversational workflow planning.
-    
-    This endpoint handles the initial user request and begins the interactive
-    workflow planning process. The agent will analyze the prompt, recognize
-    intent, and either generate a workflow plan or ask for clarification.
-    """
-    start_time = time.time()
-    user_id = current_user["user_id"]
-    
-    async with ErrorBoundary(
-        operation="run_agent",
-        user_id=user_id,
-        context=create_error_context(
-            user_id=user_id,
-            operation="run_agent",
-            prompt_length=len(request.prompt),
-            session_id=request.session_id
-        ),
-        reraise=False
-    ) as boundary:
-        # Process the initial prompt
-        context, response = await agent.process_initial_prompt(
-            prompt=request.prompt,
-            user_id=user_id,
-            session_id=request.session_id
-        )
-        
         duration = time.time() - start_time
         record_request_time(duration)
         
-        logger.info(f"Processed initial prompt for user {user_id}, session {context.session_id} in {duration:.3f}s")
-        
-        return AgentResponse(
-            message=response,
-            session_id=context.session_id,
-            conversation_state=context.state.value,
-            current_plan=context.current_plan
-        )
-    
-    # If error occurred, return error response
-    if boundary.error_occurred:
-        duration = time.time() - start_time
-        record_request_time(duration)
+        logger.error(f"Error starting ReAct workflow building: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=boundary.error_response.get("user_message", "An error occurred processing your request")
+            detail=f"Failed to start workflow building: {str(e)}"
         )
 
-
-@router.post("/chat-agent", response_model=AgentResponse)
-async def chat_agent(
-    request: ChatRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
+@router.post("/continue-workflow-build", response_model=WorkflowBuildResponse)
+async def continue_workflow_build(
+    request: ContinueWorkflowRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Handle conversational interactions for workflow planning.
-    
-    This endpoint manages multi-turn conversations where users can:
-    - Provide additional information during planning
-    - Request modifications to proposed workflow plans
-    - Approve or reject workflow plans
-    - Ask questions about the planning process
+    Continue building workflow with user input.
     """
     start_time = time.time()
-    user_id = current_user["user_id"]
     
-    async with ErrorBoundary(
-        operation="chat_agent",
-        user_id=user_id,
-        context=create_error_context(
-            user_id=user_id,
-            operation="chat_agent",
+    try:
+        logger.info(f"Continuing ReAct workflow building for session {request.session_id}")
+        
+        # Initialize integrated workflow agent
+        agent = IntegratedWorkflowAgent()
+        await agent.initialize()
+        
+        # Load conversation context (simplified for now)
+        conversation_context = ConversationContext(
             session_id=request.session_id,
-            message_length=len(request.message)
-        ),
-        reraise=False
-    ) as boundary:
-        # Handle conversation turn
-        context, response = await agent.handle_conversation_turn(
-            message=request.message,
-            session_id=request.session_id
+            user_id=current_user['user_id'],
+            messages=[request.message],
+            state=ConversationState.CONFIGURING,
+            context={}
+        )
+        
+        # Continue workflow building
+        response_message, workflow_plan = await agent.continue_workflow_building(
+            request.message, conversation_context
         )
         
         duration = time.time() - start_time
         record_request_time(duration)
         
-        logger.info(f"Handled conversation turn for session {request.session_id} in {duration:.3f}s")
+        logger.info(f"Continued ReAct workflow building for session {request.session_id} in {duration:.3f}s")
         
-        return AgentResponse(
-            message=response,
-            session_id=context.session_id,
-            conversation_state=context.state.value,
-            current_plan=context.current_plan
+        return WorkflowBuildResponse(
+            message=response_message,
+            session_id=conversation_context.session_id,
+            conversation_state=conversation_context.state.value,
+            workflow_plan=workflow_plan.dict() if workflow_plan else None,
+            reasoning={"processing_time_ms": int(duration * 1000)},
+            next_steps=["Continue", "Finalize", "Modify"]
         )
-    
-    # If error occurred, return error response
-    if boundary.error_occurred:
+        
+    except Exception as e:
         duration = time.time() - start_time
         record_request_time(duration)
+        
+        logger.error(f"Error continuing ReAct workflow building: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=boundary.error_response.get("user_message", "An error occurred during conversation")
+            detail=f"Failed to continue workflow building: {str(e)}"
         )
 
-
-@router.post("/modify-plan", response_model=PlanModificationResponse)
-async def modify_plan(
-    request: PlanModificationRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
+@router.post("/true-react/build-workflow", response_model=TrueReActResponse)
+async def build_workflow_with_true_react(
+    request: TrueReActRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Modify an existing workflow plan based on user feedback.
+    Build workflow using True ReAct Agent with real-time UI updates.
+    This is the new String Alpha-style workflow building.
+    """
+    start_time = time.time()
     
-    This endpoint allows users to request specific changes to a workflow plan.
-    The agent will analyze the modification request and update the plan accordingly.
-    """
     try:
-        # Modify the workflow plan
-        modified_plan, explanation = await agent.modify_workflow_plan(request)
+        logger.info(f"Starting True ReAct workflow building for user {current_user['user_id']}: {request.query}")
         
-        logger.info(f"Modified workflow plan for session {request.session_id}")
+        # Initialize True ReAct Agent
+        react_agent = TrueReActAgent()
+        await react_agent.initialize()
         
-        return PlanModificationResponse(
-            modified_plan=modified_plan,
-            explanation=explanation,
-            session_id=request.session_id
-        )
+        # Initialize UI Manager for real-time updates
+        ui_manager = ReActUIManager()
+        session_id = request.session_id or f"react_{int(time.time())}"
         
-    except PlanningError as e:
-        logger.error(f"Planning error in modify_plan: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Plan modification error: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in modify_plan: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during plan modification"
-        )
-
-
-@router.post("/confirm-plan", response_model=AgentResponse)
-async def confirm_plan(
-    request: PlanConfirmationRequest,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
-):
-    """
-    Confirm or reject a workflow plan.
-    
-    This endpoint handles user confirmation of workflow plans. If approved,
-    the plan is saved and marked as active. If rejected, the conversation
-    returns to the planning state for further modifications.
-    """
-    try:
-        # Handle plan confirmation
-        context, response = await agent.confirm_workflow_plan(request)
+        # Start UI session
+        await ui_manager.start_session(session_id, request.query)
         
-        logger.info(f"Handled plan confirmation for session {request.session_id}")
+        # Process with True ReAct Agent
+        result = await react_agent.process_user_request(request.query, current_user['user_id'])
         
-        return AgentResponse(
-            message=response,
-            session_id=context.session_id,
-            conversation_state=context.state.value,
-            current_plan=context.current_plan
-        )
+        # Get UI updates from session
+        session_trace = ui_manager.get_session_trace(session_id)
+        ui_updates = ui_manager.reasoning_history.get(session_id, [])
         
-    except AgentError as e:
-        logger.error(f"Agent error in confirm_plan: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Plan confirmation error: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in confirm_plan: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during plan confirmation"
-        )
-
-
-@router.get("/conversations", response_model=List[Dict[str, Any]])
-async def list_conversations(
-    limit: int = 50,
-    offset: int = 0,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    agent: ConversationalAgent = Depends(get_conversational_agent)
-):
-    """
-    List user's conversations with full context.
-    
-    This endpoint returns a list of the user's conversation sessions,
-    including messages, current state, and workflow plans.
-    """
-    try:
-        from app.core.database import get_database
+        duration = time.time() - start_time
+        record_request_time(duration)
         
-        db = await get_database()
-        user_id = current_user["user_id"]
-        
-        # Get conversations for the user with full data
-        result = db.table("conversations").select("*").eq(
-            "user_id", user_id
-        ).order("updated_at", desc=True).range(offset, offset + limit - 1).execute()
-        
-        conversations = []
-        for row in result.data:
-            # Parse messages from JSON
-            messages = []
-            if row.get("messages"):
-                import json
-                try:
-                    messages_data = json.loads(row["messages"]) if isinstance(row["messages"], str) else row["messages"]
-                    for msg_data in messages_data:
-                        messages.append({
-                            "id": msg_data.get("id", ""),
-                            "role": msg_data.get("role", ""),
-                            "content": msg_data.get("content", ""),
-                            "timestamp": msg_data.get("timestamp", ""),
-                            "metadata": msg_data.get("metadata", {})
-                        })
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"Failed to parse messages for conversation {row['session_id']}: {e}")
-                    messages = []
+        if result["success"]:
+            logger.info(f"True ReAct workflow completed for session {session_id} in {duration:.3f}s")
             
-            # Parse current plan from JSON
-            current_plan = None
-            if row.get("current_plan"):
-                import json
-                try:
-                    current_plan = json.loads(row["current_plan"]) if isinstance(row["current_plan"], str) else row["current_plan"]
-                except (json.JSONDecodeError, TypeError) as e:
-                    logger.warning(f"Failed to parse current_plan for conversation {row['session_id']}: {e}")
-                    current_plan = None
+            return TrueReActResponse(
+                success=True,
+                session_id=session_id,
+                message="Workflow created successfully using True ReAct Agent!",
+                workflow=result["workflow"],
+                reasoning_trace=result.get("reasoning_trace", []),
+                ui_updates=ui_updates
+            )
+        else:
+            # Handle different types of failures
+            error_type = result.get("error", "Unknown error")
+            is_conversational = result.get("is_conversational", False)
             
-            conversations.append({
-                "session_id": row["session_id"],
-                "user_id": row["user_id"],
-                "messages": messages,
-                "current_plan": current_plan,
-                "state": row.get("state", "initial"),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"]
-            })
-        
-        logger.info(f"Listed {len(conversations)} conversations for user {user_id}")
-        
-        return conversations
-        
+            if is_conversational:
+                # For conversational/greeting messages, return a helpful response
+                logger.info(f"Conversational request detected: {request.query}")
+                message = result.get("message", "This appears to be a conversational message. How can I help you create a workflow?")
+            else:
+                # For actual errors
+                logger.error(f"True ReAct workflow failed: {error_type}")
+                message = result.get("message", "Failed to create workflow")
+            
+            return TrueReActResponse(
+                success=False,
+                session_id=session_id,
+                message=message,
+                error=error_type,
+                reasoning_trace=result.get("reasoning_trace", []),
+                ui_updates=ui_updates
+            )
+            
     except Exception as e:
-        logger.error(f"Unexpected error in list_conversations: {e}")
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        logger.error(f"Error in True ReAct workflow building: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error listing conversations"
+            detail=f"Failed to build workflow with True ReAct Agent: {str(e)}"
         )
 
-
-@router.delete("/conversations/{session_id}")
-async def delete_conversation(
+@router.get("/true-react/session/{session_id}/updates")
+async def get_session_updates(
     session_id: str,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Delete a conversation session.
-    
-    This endpoint allows users to delete their conversation sessions and
-    associated data.
+    Get real-time updates for a True ReAct session.
+    Used for polling-based real-time updates.
     """
     try:
-        from app.core.database import get_database
+        ui_manager = ReActUIManager()
+        session_trace = ui_manager.get_session_trace(session_id)
+        ui_updates = ui_manager.reasoning_history.get(session_id, [])
         
-        db = await get_database()
-        user_id = current_user["user_id"]
+        return {
+            "session_id": session_id,
+            "updates": ui_updates,
+            "session_info": session_trace.get("session_info", {}),
+            "reasoning_trace": session_trace.get("reasoning_trace", [])
+        }
         
-        # Verify conversation exists and belongs to user
-        result = db.table("conversations").select("user_id").eq("session_id", session_id).execute()
-        
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Conversation {session_id} not found"
-            )
-        
-        if result.data[0]["user_id"] != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this conversation"
-            )
-        
-        # Delete the conversation
-        db.table("conversations").delete().eq("session_id", session_id).execute()
-        
-        logger.info(f"Deleted conversation {session_id} for user {user_id}")
-        
-        return {"message": "Conversation deleted successfully"}
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Unexpected error in delete_conversation: {e}")
+        logger.error(f"Error getting session updates: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error deleting conversation"
+            detail=f"Failed to get session updates: {str(e)}"
         )
+
+@router.get("/health")
+async def health_check():
+    """Simple health check endpoint."""
+    return {"status": "healthy", "service": "true-react-agent"}

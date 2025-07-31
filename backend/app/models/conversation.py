@@ -18,6 +18,7 @@ class ChatMessage(BaseModel):
 
 class ConversationContext(BaseModel):
     """Context for managing conversational workflow planning."""
+    id: Optional[str] = None  # Database conversation ID
     session_id: str
     user_id: str
     messages: List[ChatMessage] = Field(default_factory=list)
