@@ -11,16 +11,19 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { 
-  Save, 
-  TestTube, 
+import {
+  TestTube,
   CheckCircle,
-  XCircle, 
+  XCircle,
   AlertTriangle,
   Key,
   Settings,
   Info
 } from 'lucide-react';
+import { GoogleDriveConnectorModal } from './connectors/google_drive';
+import { NotionConnectorModal } from './connectors/notion';
+import { YouTubeConnectorModal } from './connectors/youtube';
+import { GmailConnectorModal } from './connectors/gmail';
 
 interface ConnectorConfig {
   name: string;
@@ -71,6 +74,20 @@ const CONNECTOR_TEMPLATES: { [key: string]: Partial<ConnectorConfig> } = {
       default_sheet_name: 'Sheet1'
     }
   },
+  google_drive: {
+    display_name: 'Google Drive',
+    description: 'Upload, download, and manage files and folders in Google Drive',
+    auth_type: 'oauth',
+    auth_config: {
+      scopes: ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/drive.file'],
+      redirect_uri: 'http://localhost:3000/auth/oauth/callback'
+    },
+    settings: {
+      default_action: 'list_files',
+      default_parent_folder: 'root',
+      max_results: 100
+    }
+  },
   http_request: {
     display_name: 'HTTP Request',
     description: 'Make HTTP requests to external APIs',
@@ -117,15 +134,72 @@ const CONNECTOR_TEMPLATES: { [key: string]: Partial<ConnectorConfig> } = {
       allowed_methods: ['POST'],
       response_format: 'json'
     }
+  },
+  notion: {
+    display_name: 'Notion',
+    description: 'Interact with Notion workspaces, databases, pages, and blocks',
+    auth_type: 'api_key',
+    auth_config: {
+      header_name: 'Authorization',
+      prefix: 'Bearer '
+    },
+    settings: {
+      resource: 'page',
+      operation: 'get_page',
+      simple_output: false,
+      return_all: false,
+      page_size: 100,
+      include_nested_blocks: false
+    }
   }
 };
 
 export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
-  isOpen, 
-  onClose, 
+  isOpen,
+  onClose,
   connectorName,
-  onSave 
+  onSave
 }) => {
+  // Use specialized modals for specific connectors
+  if (connectorName === 'google_drive') {
+    return (
+      <GoogleDriveConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
+
+  if (connectorName === 'notion') {
+    return (
+      <NotionConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
+
+  if (connectorName === 'youtube') {
+    return (
+      <YouTubeConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
+
+  if (connectorName === 'gmail_connector') {
+    return (
+      <GmailConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
   const { session } = useAuth();
   const [config, setConfig] = useState<ConnectorConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -170,11 +244,11 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
     });
   };
 
-    const handleOAuthSetup = async () => {
+  const handleOAuthSetup = async () => {
     if (!config || config.auth_type !== 'oauth') return;
-    
+
     setIsLoading(true);
-    
+
     try {
       // First, get the authorization URL and state from the backend
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -195,14 +269,14 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
       }
 
       const oauthData = await response.json();
-      
+
       // Store state and connector info for verification in callback
       localStorage.setItem('oauth_state', oauthData.state);
       localStorage.setItem('oauth_connector', config.name);
-      
+
       // Open popup to the authorization URL
       const popup = window.open(oauthData.authorization_url, 'oauth-popup', 'width=600,height=600');
-      
+
       // Listen for popup to close (OAuth completion)
       const checkClosed = setInterval(() => {
         if (popup?.closed) {
@@ -214,21 +288,21 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
           }, 2000);
         }
       }, 1000);
-      
-          } catch (error) {
-        console.error('Failed to initiate OAuth:', error);
-        alert('Failed to initiate OAuth setup. Please try again.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+
+    } catch (error) {
+      console.error('Failed to initiate OAuth:', error);
+      alert('Failed to initiate OAuth setup. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleTestConnection = async () => {
     if (!config) return;
-    
+
     setIsTesting(true);
     setTestResult(null);
-    
+
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${baseUrl}/api/v1/connectors/${config.name}/test`, {
@@ -241,9 +315,9 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
           settings: config.settings
         })
       });
-      
+
       const result = await response.json();
-      
+
       if (response.ok) {
         setTestResult({ success: true, message: 'Connection test successful!' });
       } else {
@@ -258,7 +332,7 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
 
   const handleSave = async () => {
     if (!config) return;
-    
+
     setIsLoading(true);
     try {
       await onSave(config);
@@ -274,7 +348,7 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
     return null;
   }
 
-          return (
+  return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -304,13 +378,13 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
               </CardHeader>
               <CardContent className="space-y-4">
                 {Object.entries(config.settings).map(([key, value]) => (
-          <div key={key} className="space-y-2">
+                  <div key={key} className="space-y-2">
                     <Label htmlFor={key}>
                       {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </Label>
                     {typeof value === 'boolean' ? (
                       <div className="flex items-center space-x-2">
-            <input
+                        <input
                           type="checkbox"
                           id={key}
                           checked={value}
@@ -320,11 +394,11 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                         <span className="text-sm text-muted-foreground">
                           {value ? 'Enabled' : 'Disabled'}
                         </span>
-          </div>
+                      </div>
                     ) : typeof value === 'number' ? (
                       <Input
                         id={key}
-              type="number"
+                        type="number"
                         value={value}
                         onChange={(e) => handleSettingChange(key, parseInt(e.target.value))}
                         placeholder={`Enter ${key.replace(/_/g, ' ')}`}
@@ -344,8 +418,8 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                         onChange={(e) => handleSettingChange(key, e.target.value)}
                         placeholder={`Enter ${key.replace(/_/g, ' ')}`}
                       />
-                      )}
-                    </div>
+                    )}
+                  </div>
                 ))}
               </CardContent>
             </Card>
@@ -372,7 +446,7 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                       {config.status === 'configured' ? 'Configured' : 'Needs Setup'}
                     </Badge>
                   </div>
-                  
+
                   {config.auth_type === 'oauth' && (
                     <div className="space-y-4">
                       <Alert>
@@ -382,11 +456,11 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                           Click the button below to start the authorization process.
                         </AlertDescription>
                       </Alert>
-                      
+
                       <Button onClick={handleOAuthSetup} className="w-full" disabled={isLoading}>
                         {isLoading ? 'Setting up OAuth...' : 'Setup OAuth Authorization'}
                       </Button>
-                      
+
                       <div className="space-y-2">
                         <Label>OAuth Scopes</Label>
                         <div className="flex flex-wrap gap-2">
@@ -397,7 +471,7 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                       </div>
                     </div>
                   )}
-                  
+
                   {config.auth_type === 'api_key' && (
                     <div className="space-y-4">
                       {Object.entries(config.auth_config).map(([key, value]) => (
@@ -412,11 +486,11 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                             placeholder={`Enter ${key.replace(/_/g, ' ')}`}
                             type={key.includes('key') || key.includes('token') ? 'password' : 'text'}
                           />
-                      </div>
+                        </div>
                       ))}
                     </div>
                   )}
-                  
+
                   {config.auth_type === 'none' && (
                     <Alert>
                       <Info className="h-4 w-4" />
@@ -442,7 +516,7 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Button 
+                <Button
                   onClick={handleTestConnection}
                   disabled={isTesting}
                   className="w-full"

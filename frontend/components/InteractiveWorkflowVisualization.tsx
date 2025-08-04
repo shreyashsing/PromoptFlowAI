@@ -23,6 +23,11 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ConnectorConfigModal } from './ConnectorConfigModal'
+import { NotionConnectorModal } from './connectors/notion/NotionConnectorModal'
+import { GoogleDriveConnectorModal } from './connectors/google_drive/GoogleDriveConnectorModal'
+import { YouTubeConnectorModal } from './connectors/youtube/YouTubeConnectorModal'
+import { AirtableConnectorModal } from './connectors/airtable/AirtableConnectorModal'
+import { GmailConnectorModal } from './connectors/gmail'
 import {
   Workflow,
   Play,
@@ -581,19 +586,40 @@ export default function InteractiveWorkflowVisualization({
       </ReactFlow>
 
       {/* Configuration Modal */}
-      {configModalOpen && configNodeId && workflow && (
-        <ConnectorConfigModal
-          isOpen={configModalOpen}
-          onClose={() => {
+      {configModalOpen && configNodeId && workflow && (() => {
+        const connectorName = workflow.nodes.find(n => n.id === configNodeId)?.connector_name || null;
+        const modalProps = {
+          isOpen: configModalOpen,
+          onClose: () => {
             setConfigModalOpen(false);
             setConfigNodeId(null);
-          }}
-          connectorName={workflow.nodes.find(n => n.id === configNodeId)?.connector_name || null}
-          onSave={async (config: any) => {
+          },
+          onSave: async (config: any) => {
             await handleConfigSave(configNodeId, config);
-          }}
-        />
-      )}
+          }
+        };
+
+        // Use specific modals for certain connectors
+        switch (connectorName) {
+          case 'notion':
+            return <NotionConnectorModal {...modalProps} />;
+          case 'google_drive':
+            return <GoogleDriveConnectorModal {...modalProps} />;
+          case 'youtube':
+            return <YouTubeConnectorModal {...modalProps} />;
+          case 'airtable':
+            return <AirtableConnectorModal {...modalProps} />;
+          case 'gmail_connector':
+            return <GmailConnectorModal {...modalProps} />;
+          default:
+            return (
+              <ConnectorConfigModal
+                {...modalProps}
+                connectorName={connectorName}
+              />
+            );
+        }
+      })()}
     </div>
   )
 }

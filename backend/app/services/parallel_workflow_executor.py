@@ -390,6 +390,20 @@ class ParallelWorkflowExecutor:
                 else:
                     logger.warning(f"Could not resolve reference: {reference}")
             
+            # 2. Then process single braces {...}
+            single_brace_pattern = r'\{([^{}]+)\}'
+            single_matches = re.findall(single_brace_pattern, resolved_value)
+            
+            for reference in single_matches:
+                original_pattern = f"{{{reference}}}"  # {reference}
+                replacement_value = self._resolve_reference(reference, previous_results)
+                
+                if replacement_value is not None:
+                    resolved_value = resolved_value.replace(original_pattern, str(replacement_value))
+                    logger.debug(f"Replaced {original_pattern} with resolved value")
+                else:
+                    logger.warning(f"Could not resolve reference: {reference}")
+            
             if resolved_value != value:
                 logger.debug(f"String resolved: '{value}' -> '{resolved_value}'")
             
@@ -538,7 +552,15 @@ class ParallelWorkflowExecutor:
         }
         
         current = data
-        fields = field_path.split(".")
+        
+        # Handle bracket notation like result[0] by converting to dot notation
+        normalized_path = field_path
+        import re
+        # Convert result[0] to result.0, citations[1] to citations.1, etc.
+        bracket_pattern = r'(\w+)\[(\d+)\]'
+        normalized_path = re.sub(bracket_pattern, r'\1.\2', normalized_path)
+        
+        fields = normalized_path.split(".")
         
         for i, field in enumerate(fields):
             if isinstance(current, dict):

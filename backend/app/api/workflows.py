@@ -115,9 +115,9 @@ async def create_workflow(
         if request.nodes and request.edges:
             node_ids = {node.id for node in request.nodes}
             for edge in request.edges:
-                if edge.source_id not in node_ids or edge.target_id not in node_ids:
+                if edge.source not in node_ids or edge.target not in node_ids:
                     raise ValidationException(
-                        f"Edge references non-existent node: {edge.source_id} -> {edge.target_id}",
+                        f"Edge references non-existent node: {edge.source} -> {edge.target}",
                         field="edges"
                     )
         
@@ -133,7 +133,7 @@ async def create_workflow(
             nodes=request.nodes,
             edges=request.edges,
             triggers=request.triggers,
-            status=WorkflowStatus.DRAFT,
+            status=getattr(request, 'status', WorkflowStatus.ACTIVE),  # Use request status or default to ACTIVE
             created_at=now,
             updated_at=now
         )

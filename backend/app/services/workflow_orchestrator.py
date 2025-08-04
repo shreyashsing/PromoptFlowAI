@@ -498,9 +498,30 @@ class WorkflowOrchestrator:
         
         for i, field in enumerate(fields):
             if isinstance(current, dict):
+                # Handle result[N] pattern for array-like access
+                if field.startswith("result[") and field.endswith("]"):
+                    try:
+                        index_str = field[7:-1]  # Extract the number from result[N]
+                        index = int(index_str)
+                        
+                        # Generic handling: if the data is not an array but someone is trying to access it like one,
+                        # return None for indices > 0, and the actual data for index 0
+                        if index == 0:
+                            # For index 0, return the current data as-is (this represents the single result)
+                            logger.info(f"Treating single result as result[0]: {current}")
+                            # Don't modify current, just continue processing
+                        else:
+                            # For any index > 0, return None since we only have one result
+                            logger.warning(f"Index {index} requested but only single result available")
+                            return None
+                            
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Invalid result index format '{field}': {e}")
+                        return None
                 # First try the exact field name
-                if field in current:
+                elif field in current:
                     current = current[field]
+
                 # If field is 'result' and not found, try mapped alternatives with intelligent combining
                 elif field == 'result' and field not in current:
                     found_value = None
@@ -537,8 +558,14 @@ class WorkflowOrchestrator:
                         logger.warning(f"Field '{field}' not found in data. Available fields: {list(current.keys())}")
                         return None
                 else:
-                    logger.warning(f"Field '{field}' not found in data. Available fields: {list(current.keys())}")
-                    return None
+                    # Try intelligent field mapping for common patterns
+                    mapped_value = self._try_intelligent_field_mapping(current, field)
+                    if mapped_value is not None:
+                        current = mapped_value
+                        logger.info(f"Intelligently mapped field '{field}' to: {current}")
+                    else:
+                        logger.warning(f"Field '{field}' not found in data. Available fields: {list(current.keys())}")
+                        return None
             elif isinstance(current, list) and field.isdigit():
                 index = int(field)
                 if 0 <= index < len(current):
@@ -546,12 +573,60 @@ class WorkflowOrchestrator:
                 else:
                     logger.warning(f"Index {index} out of range for list of length {len(current)}")
                     return None
+
             else:
                 logger.warning(f"Cannot navigate field '{field}' in data type {type(current)}")
                 return None
         
         logger.info(f"Successfully extracted value from path '{field_path}': {current}")
         return current
+    
+    def _try_intelligent_field_mapping(self, data: dict, field: str) -> Any:
+        """
+        Try to intelligently map field names to actual data structure.
+        This handles common patterns where AI-generated workflows might use
+        different field names than what the connector actually returns.
+        
+        Args:
+            data: The current data dictionary
+            field: The field name being requested
+            
+        Returns:
+            The mapped value or None if no mapping found
+        """
+        # Common field mappings
+        field_mappings = {
+            'url': ['url', 'link', 'href', 'source', 'citation'],
+            'summary': ['summary', 'content', 'text', 'description', 'response'],
+            'title': ['title', 'name', 'subject', 'heading'],
+            'date': ['date', 'created_at', 'published_at', 'timestamp'],
+            'content': ['content', 'text', 'body', 'description', 'response'],
+            'id': ['id', 'identifier', 'key', 'uuid'],
+            'status': ['status', 'state', 'condition'],
+            'message': ['message', 'text', 'content', 'response']
+        }
+        
+        # If requesting 'url' and we have citations, return the first citation
+        if field == 'url' and 'citations' in data:
+            citations = data['citations']
+            if isinstance(citations, list) and citations:
+                return citations[0]
+        
+        # Try direct field mapping
+        if field in field_mappings:
+            for alternative in field_mappings[field]:
+                if alternative in data:
+                    return data[alternative]
+        
+        # Try partial matching (case-insensitive)
+        field_lower = field.lower()
+        for key, value in data.items():
+            if key.lower() == field_lower:
+                return value
+        
+        return None
+    
+
     
     async def _load_auth_tokens_for_connector(self, user_id: str, connector_name: str) -> Dict[str, Any]:
         """

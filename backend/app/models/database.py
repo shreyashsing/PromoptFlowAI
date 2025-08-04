@@ -102,6 +102,7 @@ class CreateWorkflowRequest(BaseModel):
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     triggers: List[Dict[str, Any]] = Field(default_factory=list)
+    status: Optional[WorkflowStatus] = WorkflowStatus.ACTIVE
 
 
 class UpdateWorkflowRequest(BaseModel):

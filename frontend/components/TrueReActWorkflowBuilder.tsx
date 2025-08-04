@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { createClient } from '@supabase/supabase-js';
 import {
   CheckCircle, Play, Settings,
   Loader2, Clock, Eye, Layers, Mail, Globe,
@@ -27,12 +28,33 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { workflowReactAPI } from '@/lib/api';
 import StringLikeConnectorModal from '@/components/StringLikeConnectorModal';
+import { GoogleDriveConnectorModal } from '@/components/connectors/google_drive';
+import { NotionConnectorModal } from '@/components/connectors/notion';
+import { YouTubeConnectorModal } from '@/components/connectors/youtube';
+import { AirtableConnectorModal } from '@/components/connectors/airtable';
+import { GmailConnectorModal } from '@/components/connectors/gmail';
+
+interface WorkflowStep {
+  connector_name: string;
+  purpose: string;
+  parameters: Record<string, any>;
+  config?: Record<string, any>;
+}
+
+interface Workflow {
+  id?: string;
+  name?: string;
+  description?: string;
+  steps: WorkflowStep[];
+  status?: string;
+  total_steps?: number;
+}
 
 interface TrueReActResponse {
   success: boolean;
   session_id: string;
   message: string;
-  workflow?: any;
+  workflow?: Workflow;
   reasoning_trace: string[];
   ui_updates: Array<{
     timestamp: string;
@@ -46,6 +68,10 @@ interface TrueReActResponse {
     };
   }>;
   error?: string;
+  // Conversational planning fields
+  phase?: 'planning' | 'completed';
+  plan?: any;
+  awaiting_approval?: boolean;
 }
 
 interface ReActStep {
@@ -170,9 +196,20 @@ export default function TrueReActWorkflowBuilder() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const [reactSteps, setReActSteps] = useState<ReActStep[]>([]);
-  const [currentWorkflow, setCurrentWorkflow] = useState<any>(null);
+  const [currentWorkflow, setCurrentWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState(0);
   const [isExecuting, setIsExecuting] = useState(false);
+
+  // Use shared Supabase client to avoid multiple instances warning
+  const supabase = React.useMemo(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), []);
+
+  // Conversational planning state
+  const [currentPlan, setCurrentPlan] = useState<any>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [planPhase, setPlanPhase] = useState<'initial' | 'planning' | 'completed'>('initial');
 
   // React Flow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -248,59 +285,185 @@ export default function TrueReActWorkflowBuilder() {
 
     console.log('🔄 Setting isExecuting to true');
     setIsExecuting(true);
-    
+
     try {
-      console.log('🎯 About to add first ReAct step');
-      // For now, we'll execute the workflow directly using the True ReAct agent
-      // In the future, this could save the workflow and use the workflow execution API
-
+      console.log('🎯 Starting real workflow execution');
       addReActStep('reasoning', 'Workflow Execution', 'Starting workflow execution...', 'active');
-      console.log('✅ Added first ReAct step');
 
-      // Execute each step in sequence
-      console.log(`🔄 Starting execution loop for ${currentWorkflow.steps.length} steps`);
-      
-      for (let i = 0; i < currentWorkflow.steps.length; i++) {
-        const step = currentWorkflow.steps[i];
-        
-        console.log(`🎯 Executing step ${i + 1}: ${step.connector_name}`);
-        addReActStep('action', `Step ${i + 1}: ${step.connector_name}`,
-          `Executing ${step.purpose}`, 'active', step.connector_name, i + 1);
-
-        // Simulate step execution (replace with actual connector execution)
-        console.log(`⏳ Waiting 2 seconds for step ${i + 1}...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        console.log(`✅ Step ${i + 1} completed`);
-
-        // Find the step by title since we need to update it
-        setReActSteps(prev => prev.map(reactStep =>
-          reactStep.title === `Step ${i + 1}: ${step.connector_name}`
-            ? { ...reactStep, status: 'completed' as const, content: `✅ Completed ${step.connector_name}` }
-            : reactStep
-        ));
+      // Get session token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('No authentication session found');
       }
 
-      console.log('🎊 All steps completed, adding completion message');
-      addReActStep('step_completed', 'Workflow Complete',
-        '🎉 Workflow executed successfully! Check your email for the results.', 'completed');
-      console.log('✅ Completion message added');
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      let workflowId = currentWorkflow.id;
+
+      console.log('🔍 Current workflow ID:', workflowId);
+      console.log('🔍 Current workflow:', currentWorkflow);
+
+      // Always save the workflow to ensure it exists in database with correct format
+      console.log('💾 Saving workflow to database...');
+      addReActStep('action', 'Saving Workflow', 'Saving workflow to database...', 'active');
+      
+      const workflowPayload = {
+        name: currentWorkflow.name || 'ReAct Generated Workflow',
+        description: currentWorkflow.description || 'Workflow generated by ReAct agent',
+        nodes: (currentWorkflow.steps || []).map((step: WorkflowStep, index: number) => ({
+          id: `${step.connector_name}-${index}`,
+          connector_name: step.connector_name,
+          parameters: step.parameters || {},
+          position: { x: index * 250 + 100, y: 100 },
+          dependencies: index > 0 ? [`${currentWorkflow.steps[index - 1].connector_name}-${index - 1}`] : []
+        })),
+        edges: (currentWorkflow.steps || []).length > 1 ? 
+          (currentWorkflow.steps || []).slice(1).map((_, index: number) => ({
+            id: `edge-${index + 1}`,
+            source: `${currentWorkflow.steps[index].connector_name}-${index}`,
+            target: `${currentWorkflow.steps[index + 1].connector_name}-${index + 1}`
+          })) : [],
+        triggers: []
+      };
+      
+      console.log('📤 Sending workflow payload:', JSON.stringify(workflowPayload, null, 2));
+      
+      const saveResponse = await fetch(`${baseUrl}/api/v1/workflows`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(workflowPayload)
+      });
+
+      if (!saveResponse.ok) {
+        const errorData = await saveResponse.json().catch(() => ({}));
+        console.error('❌ Workflow save failed:', errorData);
+        console.error('❌ Response status:', saveResponse.status);
+        console.error('❌ Response text:', saveResponse.statusText);
+        
+        // Better error message formatting
+        let errorMessage = 'Failed to save workflow';
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            errorMessage += ': ' + errorData.detail.map((err: any) => 
+              typeof err === 'object' ? `${err.loc?.join('.')} - ${err.msg}` : String(err)
+            ).join(', ');
+          } else {
+            errorMessage += ': ' + errorData.detail;
+          }
+        } else {
+          errorMessage += ': ' + saveResponse.statusText;
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      const savedWorkflow = await saveResponse.json();
+      workflowId = savedWorkflow.id;
+      
+      // Update current workflow with the saved ID
+      setCurrentWorkflow((prev: Workflow | null) => prev ? { ...prev, id: workflowId } : null);
+      
+      console.log('✅ Workflow saved with ID:', workflowId);
+      addReActStep('action', 'Workflow Saved', `✅ Workflow saved with ID: ${workflowId}`, 'completed');
+
+      // Call the workflow execution API
+      console.log(`🌐 Calling workflow execution API: ${baseUrl}/api/v1/workflows/${workflowId}/execute`);
+      
+      const response = await fetch(`${baseUrl}/api/v1/workflows/${workflowId}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          trigger_type: 'manual',
+          parameters: {}
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const executionResult = await response.json();
+      console.log('✅ Workflow execution started:', executionResult);
+
+      addReActStep('action', 'Execution Started', 
+        `🚀 Workflow execution started with ID: ${executionResult.execution_id}`, 'active');
+
+      // Poll for execution status
+      const executionId = executionResult.execution_id;
+      let isCompleted = false;
+      let pollCount = 0;
+      const maxPolls = 30; // 5 minutes max (10 second intervals)
+
+      while (!isCompleted && pollCount < maxPolls) {
+        console.log(`🔍 Polling execution status (attempt ${pollCount + 1}/${maxPolls})`);
+        
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+        
+        try {
+          const statusResponse = await fetch(`${baseUrl}/api/v1/executions/${executionId}`, {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+            }
+          });
+
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            console.log('📊 Execution status:', statusData);
+
+            if (statusData.status === 'completed') {
+              isCompleted = true;
+              addReActStep('step_completed', 'Workflow Complete',
+                '🎉 Workflow executed successfully! Check your email for the results.', 'completed');
+              
+              // Show execution results if available
+              if (statusData.result) {
+                addReActStep('observation', 'Execution Results',
+                  `📋 Results: ${JSON.stringify(statusData.result, null, 2)}`, 'completed');
+              }
+            } else if (statusData.status === 'failed') {
+              isCompleted = true;
+              addReActStep('observation', 'Execution Failed',
+                `❌ Workflow execution failed: ${statusData.error || 'Unknown error'}`, 'failed');
+            } else {
+              // Still running, update status
+              addReActStep('action', 'Execution Progress',
+                `⏳ Workflow is ${statusData.status}... (${statusData.completed_steps || 0}/${statusData.total_steps || 'unknown'} steps)`, 'active');
+            }
+          }
+        } catch (pollError) {
+          console.warn('⚠️ Error polling execution status:', pollError);
+        }
+        
+        pollCount++;
+      }
+
+      if (!isCompleted) {
+        addReActStep('observation', 'Execution Timeout',
+          '⏰ Workflow execution is taking longer than expected. Check the monitoring dashboard for updates.', 'active');
+      }
 
     } catch (error) {
       console.error('❌ Workflow execution failed:', error);
       addReActStep('observation', 'Execution Failed',
-        `❌ Workflow execution failed: ${error}`, 'failed');
+        `❌ Workflow execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'failed');
     } finally {
       console.log('🔄 Setting isExecuting to false');
       setIsExecuting(false);
       console.log('✅ Workflow execution finished');
     }
-  }, [currentWorkflow, addReActStep, setReActSteps]);
+  }, [currentWorkflow, addReActStep, supabase]);
 
   // Convert workflow to React Flow visualization
-  const updateWorkflowVisualization = useCallback((workflow: any) => {
+  const updateWorkflowVisualization = useCallback((workflow: Workflow) => {
     if (!workflow || !workflow.steps) return;
 
-    const flowNodes: Node[] = workflow.steps.map((step: any, index: number) => {
+    const flowNodes: Node[] = workflow.steps.map((step: WorkflowStep, index: number) => {
       const nodeId = `${step.connector_name}-${index}`;
       return {
         id: nodeId,
@@ -319,7 +482,7 @@ export default function TrueReActWorkflowBuilder() {
     for (let i = 1; i < flowNodes.length; i++) {
       const sourceNodeId = flowNodes[i - 1].id;
       const targetNodeId = flowNodes[i].id;
-      
+
       flowEdges.push({
         id: `edge-${i}`,
         source: sourceNodeId,
@@ -415,7 +578,7 @@ export default function TrueReActWorkflowBuilder() {
     try {
       addReActStep('reasoning', 'Starting Analysis', 'Initializing True ReAct Agent...', 'active');
 
-      const response: TrueReActResponse = await workflowReactAPI.buildWorkflowWithTrueReact({
+      const response: TrueReActResponse = await workflowReactAPI.buildWorkflowConversationally({
         query,
         session_id: sessionId || undefined
       });
@@ -429,6 +592,10 @@ export default function TrueReActWorkflowBuilder() {
 
       // Update workflow visualization
       if (response.workflow) {
+        console.log('🔍 ReAct response workflow:', response.workflow);
+        console.log('🔍 Workflow has ID:', response.workflow.id);
+        console.log('🔍 Workflow steps:', response.workflow.steps);
+        
         setCurrentWorkflow(response.workflow);
         updateWorkflowVisualization(response.workflow);
       }
@@ -439,12 +606,46 @@ export default function TrueReActWorkflowBuilder() {
       });
 
       if (response.success) {
-        addReActStep('observation', 'Success', response.message, 'completed');
+        // Handle different phases of conversational planning
+        if (response.phase === 'planning') {
+          addReActStep('observation', 'Plan Created', 'Workflow plan ready for your review', 'completed');
+          addReActStep('reasoning', 'Awaiting Approval', response.message, 'active');
+
+          // Update plan state
+          setCurrentPlan(response.plan);
+          setAwaitingApproval(response.awaiting_approval || false);
+          setPlanPhase('planning');
+
+          // Store the plan context for potential approval
+          if (response.plan && sessionId) {
+            workflowReactAPI.storePlanContext({
+              session_id: sessionId,
+              plan: response.plan,
+              awaiting_approval: response.awaiting_approval || false,
+              created_at: new Date().toISOString()
+            });
+          }
+        } else if (response.phase === 'completed') {
+          addReActStep('observation', 'Workflow Complete', response.message, 'completed');
+
+          // Clear plan state and set workflow
+          setCurrentPlan(null);
+          setAwaitingApproval(false);
+          setPlanPhase('completed');
+
+          // Clear stored plan context
+          if (sessionId) {
+            workflowReactAPI.clearPlanContext(sessionId);
+          }
+        } else {
+          addReActStep('observation', 'Success', response.message, 'completed');
+        }
       } else {
         // Check if it's a conversational response vs actual error
         const isConversational = response.error === 'no_workflow_needed' ||
           response.error === 'no_actionable_intent' ||
-          response.error === 'no_workflow_created';
+          response.error === 'no_workflow_created' ||
+          response.error === 'no_plan_context';
 
         if (isConversational) {
           addReActStep('observation', 'Conversational Response', response.message, 'info');
@@ -541,11 +742,70 @@ export default function TrueReActWorkflowBuilder() {
           </ScrollArea>
         </div>
 
+        {/* Plan Approval Section */}
+        {awaitingApproval && currentPlan && (
+          <div className="p-3 border-t border-gray-700 bg-gray-750">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-blue-400" />
+                <h3 className="text-sm font-medium text-gray-200">Plan Ready for Approval</h3>
+              </div>
+
+              <div className="bg-gray-800 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-gray-300 font-medium">Proposed Workflow:</p>
+                <p className="text-xs text-gray-400">{currentPlan.summary || 'Workflow plan created'}</p>
+
+                {currentPlan.tasks && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-300 font-medium">Tasks ({currentPlan.tasks.length}):</p>
+                    {currentPlan.tasks.slice(0, 3).map((task: any, index: number) => (
+                      <div key={index} className="text-xs text-gray-400 flex items-center gap-2">
+                        <span className="w-4 h-4 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs">
+                          {task.task_number || index + 1}
+                        </span>
+                        <span>{task.description}</span>
+                      </div>
+                    ))}
+                    {currentPlan.tasks.length > 3 && (
+                      <p className="text-xs text-gray-500">...and {currentPlan.tasks.length - 3} more tasks</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setQuery('approve')}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm py-2"
+                  size="sm"
+                >
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Approve Plan
+                </Button>
+                <Button
+                  onClick={() => setQuery('I want to modify this plan')}
+                  variant="outline"
+                  className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-700 text-sm py-2"
+                  size="sm"
+                >
+                  Modify Plan
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Bottom Input Area - Always Visible */}
         <div className="p-2 border-t border-gray-700 min-h-[100px]">
           <div className="space-y-1">
             <Textarea
-              placeholder={reactSteps.length === 0 ? "Describe the workflow you want to create..." : "Send another message or ask for modifications..."}
+              placeholder={
+                awaitingApproval
+                  ? "Type 'approve' to proceed, or describe changes you'd like to make..."
+                  : reactSteps.length === 0
+                    ? "Describe the workflow you want to create..."
+                    : "Send another message or ask for modifications..."
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-gray-700 border-gray-600 text-white placeholder-gray-400 resize-none"
@@ -653,59 +913,131 @@ export default function TrueReActWorkflowBuilder() {
       </div>
 
       {/* Connector Configuration Modal */}
-      <StringLikeConnectorModal
-        isOpen={configModalOpen}
-        onClose={() => {
-          console.log('Closing config modal');
-          setConfigModalOpen(false);
-          setSelectedConnector(null);
-          setSelectedNodeData(null);
-        }}
-        connectorName={selectedConnector || ''}
-        connectorConfig={selectedNodeData?.parameters}
-        onSave={(config) => {
-          // Handle saving connector configuration
-          console.log('Saving connector config:', config);
+      {(() => {
+        const modalProps = {
+          isOpen: configModalOpen,
+          onClose: () => {
+            console.log('Closing config modal');
+            setConfigModalOpen(false);
+            setSelectedConnector(null);
+            setSelectedNodeData(null);
+          },
+          onSave: async (config: any) => {
+            // Handle saving connector configuration
+            console.log('Saving connector config:', config);
 
-          // Update the workflow nodes with the new configuration
-          if (selectedNodeData && selectedNodeData.id) {
-            setNodes((nds) =>
-              nds.map((node) => {
-                if (node.id === selectedNodeData.id) {
-                  return {
-                    ...node,
-                    data: {
-                      ...node.data,
-                      parameters: config,
-                      config: config, // Also save as config for backward compatibility
-                    },
-                  };
-                }
-                return node;
-              })
-            );
-
-            // Also update the workflow state if it exists
-            if (currentWorkflow) {
-              const updatedWorkflow = {
-                ...currentWorkflow,
-                steps: currentWorkflow.steps.map((step: any) => {
-                  if (step.connector_name === selectedConnector) {
+            // Update the workflow nodes with the new configuration
+            if (selectedNodeData && selectedNodeData.id) {
+              setNodes((nds) =>
+                nds.map((node) => {
+                  if (node.id === selectedNodeData.id) {
                     return {
-                      ...step,
-                      parameters: config,
+                      ...node,
+                      data: {
+                        ...node.data,
+                        parameters: config.settings || config,
+                        config: config, // Save full config including auth
+                      },
                     };
                   }
-                  return step;
+                  return node;
                 })
-              };
-              setCurrentWorkflow(updatedWorkflow);
-            }
-          }
+              );
 
-          setConfigModalOpen(false);
-        }}
-      />
+              // Also update the workflow state if it exists
+              if (currentWorkflow) {
+                const updatedWorkflow: Workflow = {
+                  ...currentWorkflow,
+                  steps: currentWorkflow.steps.map((step: WorkflowStep) => {
+                    if (step.connector_name === selectedConnector) {
+                      return {
+                        ...step,
+                        parameters: config.settings || config,
+                      };
+                    }
+                    return step;
+                  })
+                };
+                setCurrentWorkflow(updatedWorkflow);
+              }
+            }
+
+            setConfigModalOpen(false);
+          },
+          // Pass AI-generated parameters to custom modals
+          initialData: selectedNodeData?.parameters || selectedNodeData?.config || {}
+        };
+
+        // Use specific modals for certain connectors
+        switch (selectedConnector) {
+          case 'notion':
+            return <NotionConnectorModal {...modalProps} />;
+          case 'google_drive':
+            return <GoogleDriveConnectorModal {...modalProps} />;
+          case 'youtube':
+            return <YouTubeConnectorModal {...modalProps} />;
+          case 'airtable':
+            return <AirtableConnectorModal {...modalProps} />;
+          case 'gmail_connector':
+            return <GmailConnectorModal {...modalProps} />;
+          default:
+            return (
+              <StringLikeConnectorModal
+                isOpen={configModalOpen}
+                onClose={() => {
+                  console.log('Closing config modal');
+                  setConfigModalOpen(false);
+                  setSelectedConnector(null);
+                  setSelectedNodeData(null);
+                }}
+                connectorName={selectedConnector || ''}
+                connectorConfig={selectedNodeData?.parameters}
+                onSave={(config) => {
+                  // Handle saving connector configuration
+                  console.log('Saving connector config:', config);
+
+                  // Update the workflow nodes with the new configuration
+                  if (selectedNodeData && selectedNodeData.id) {
+                    setNodes((nds) =>
+                      nds.map((node) => {
+                        if (node.id === selectedNodeData.id) {
+                          return {
+                            ...node,
+                            data: {
+                              ...node.data,
+                              parameters: config,
+                              config: config, // Also save as config for backward compatibility
+                            },
+                          };
+                        }
+                        return node;
+                      })
+                    );
+
+                    // Also update the workflow state if it exists
+                    if (currentWorkflow) {
+                      const updatedWorkflow: Workflow = {
+                        ...currentWorkflow,
+                        steps: currentWorkflow.steps.map((step: WorkflowStep) => {
+                          if (step.connector_name === selectedConnector) {
+                            return {
+                              ...step,
+                              parameters: config,
+                            };
+                          }
+                          return step;
+                        })
+                      };
+                      setCurrentWorkflow(updatedWorkflow);
+                    }
+                  }
+
+                  setConfigModalOpen(false);
+                }}
+              />
+            );
+        }
+      })()}
     </div>
   );
 }

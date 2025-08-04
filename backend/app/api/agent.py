@@ -26,6 +26,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+# Simple in-memory session store for conversational planning
+# In production, this should be Redis or database-backed
+_session_store: Dict[str, Dict[str, Any]] = {}
+
+async def get_session_context(session_id: str) -> Optional[Dict[str, Any]]:
+    """Get session context for conversational planning."""
+    return _session_store.get(session_id)
+
+async def store_session_context(session_id: str, context: Dict[str, Any]) -> None:
+    """Store session context for conversational planning."""
+    _session_store[session_id] = context
+    logger.info(f"📝 Stored session context for {session_id}")
+
+async def clear_session_context(session_id: str) -> None:
+    """Clear session context."""
+    if session_id in _session_store:
+        del _session_store[session_id]
+        logger.info(f"🗑️ Cleared session context for {session_id}")
+
 # Request/Response Models
 class WorkflowBuildRequest(BaseModel):
     query: str = Field(..., description="User's workflow request")
@@ -48,6 +67,11 @@ class TrueReActRequest(BaseModel):
     query: str = Field(..., description="User's workflow request")
     session_id: Optional[str] = Field(None, description="Session ID for continuation")
 
+class PlanResponseRequest(BaseModel):
+    response: str = Field(..., description="User response to plan (approve/modify)")
+    session_id: str = Field(..., description="Session ID from planning phase")
+    current_plan: Dict[str, Any] = Field(..., description="Current plan being responded to")
+
 class TrueReActResponse(BaseModel):
     success: bool
     session_id: str
@@ -56,6 +80,10 @@ class TrueReActResponse(BaseModel):
     reasoning_trace: List[str] = []
     ui_updates: List[Dict[str, Any]] = []
     error: Optional[str] = None
+    # New conversational planning fields
+    phase: Optional[str] = None  # "planning", "completed", etc.
+    plan: Optional[Dict[str, Any]] = None  # Workflow plan for user review
+    awaiting_approval: Optional[bool] = None  # Whether waiting for user approval
 
 # Working Endpoints
 
@@ -194,8 +222,31 @@ async def build_workflow_with_true_react(
         # Start UI session
         await ui_manager.start_session(session_id, request.query)
         
+        # Session context management for conversational planning
+        # For now, we'll use a simple in-memory store (in production, use Redis/database)
+        session_context = await get_session_context(session_id)
+        logger.info(f"🔍 Session context for {session_id}: {session_context is not None}")
+        
+        # Initialize ui_updates early to avoid variable access errors
+        ui_updates = []
+        
+        # Check if this looks like an approval response WITHOUT session context
+        approval_keywords = ['approve', 'approved', 'looks good', 'proceed', 'yes', 'ok', 'correct']
+        if request.query.lower().strip() in approval_keywords and not session_context:
+            # This is an approval response but no session context exists
+            logger.info(f"Detected approval keyword without session context: {request.query}")
+            
+            return TrueReActResponse(
+                success=False,
+                session_id=session_id,
+                message="It looks like you're trying to approve a workflow plan. However, I don't see a current plan to approve. Please either:\n\n1. Start by describing a new workflow you'd like me to create, or\n2. If you have a plan from a previous conversation, please use the plan approval interface.\n\nWhat workflow would you like me to help you create?",
+                error="no_plan_context",
+                reasoning_trace=["Approval keyword detected without plan context"],
+                ui_updates=ui_updates
+            )
+        
         # Process with True ReAct Agent
-        result = await react_agent.process_user_request(request.query, current_user['user_id'])
+        result = await react_agent.process_user_request(request.query, current_user['user_id'], session_context)
         
         # Get UI updates from session
         session_trace = ui_manager.get_session_trace(session_id)
@@ -205,22 +256,81 @@ async def build_workflow_with_true_react(
         record_request_time(duration)
         
         if result["success"]:
-            logger.info(f"True ReAct workflow completed for session {session_id} in {duration:.3f}s")
+            # Handle different phases of the conversational planning system
+            phase = result.get("phase", "completed")
             
-            return TrueReActResponse(
-                success=True,
-                session_id=session_id,
-                message="Workflow created successfully using True ReAct Agent!",
-                workflow=result["workflow"],
-                reasoning_trace=result.get("reasoning_trace", []),
-                ui_updates=ui_updates
-            )
+            if phase == "planning":
+                # Planning phase - present plan to user for approval
+                logger.info(f"True ReAct planning phase completed for session {session_id} in {duration:.3f}s")
+                
+                # Store session context for plan approval
+                await store_session_context(session_id, {
+                    "awaiting_approval": True,
+                    "current_plan": result.get("plan"),
+                    "original_request": request.query,
+                    "user_id": current_user['user_id'],
+                    "created_at": time.time()
+                })
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message=result.get("message", "Please review the workflow plan"),
+                    workflow=None,  # No workflow yet, still in planning
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    # Add planning-specific fields
+                    phase=phase,
+                    plan=result.get("plan"),
+                    awaiting_approval=result.get("awaiting_approval", True)
+                )
+                
+            elif phase == "completed":
+                # Execution completed - return final workflow
+                logger.info(f"True ReAct workflow completed for session {session_id} in {duration:.3f}s")
+                
+                # Store executed workflow in session context for future modifications
+                await store_session_context(session_id, {
+                    "executed_workflow": result.get("workflow"),
+                    "original_plan": result.get("plan", {}),
+                    "user_id": current_user['user_id'],
+                    "completed_at": time.time(),
+                    "awaiting_approval": False  # No longer awaiting approval
+                })
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message="Workflow created successfully! You can now request modifications if needed.",
+                    workflow=result.get("workflow"),
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase
+                )
+            
+            else:
+                # Unknown phase, return what we have
+                logger.info(f"True ReAct phase '{phase}' completed for session {session_id} in {duration:.3f}s")
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message=result.get("message", "Workflow processing in progress"),
+                    workflow=result.get("workflow"),
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase
+                )
         else:
             # Handle different types of failures
             error_type = result.get("error", "Unknown error")
             is_conversational = result.get("is_conversational", False)
             
-            if is_conversational:
+            if error_type == "no_plan_context":
+                # Special handling for approval without context
+                logger.info(f"Approval without plan context detected: {request.query}")
+                message = result.get("message", "Please start by describing what workflow you'd like me to create.")
+            elif is_conversational:
                 # For conversational/greeting messages, return a helpful response
                 logger.info(f"Conversational request detected: {request.query}")
                 message = result.get("message", "This appears to be a conversational message. How can I help you create a workflow?")
@@ -246,6 +356,117 @@ async def build_workflow_with_true_react(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build workflow with True ReAct Agent: {str(e)}"
+        )
+
+
+@router.post("/true-react/plan-response", response_model=TrueReActResponse)
+async def handle_plan_response(
+    request: PlanResponseRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Handle user response to workflow plan (approve/modify).
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"Handling plan response for user {current_user['user_id']}: {request.response}")
+        
+        # Initialize True ReAct Agent
+        react_agent = TrueReActAgent()
+        await react_agent.initialize()
+        
+        # Initialize UI Manager for real-time updates
+        ui_manager = ReActUIManager()
+        
+        # Handle user response
+        result = await react_agent.handle_user_response(
+            request.response, 
+            current_user['user_id'], 
+            request.current_plan
+        )
+        
+        # Get UI updates from session
+        ui_updates = ui_manager.reasoning_history.get(request.session_id, [])
+        
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        if result["success"]:
+            phase = result.get("phase", "completed")
+            
+            if phase == "planning":
+                # Still in planning phase - plan was modified
+                logger.info(f"Plan modified for session {request.session_id} in {duration:.3f}s")
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=request.session_id,
+                    message=result.get("message", "Plan updated based on your feedback"),
+                    workflow=None,
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase,
+                    plan=result.get("plan"),
+                    awaiting_approval=result.get("awaiting_approval", True)
+                )
+                
+            elif phase == "completed":
+                # Plan was approved and executed
+                logger.info(f"Plan approved and executed for session {request.session_id} in {duration:.3f}s")
+                
+                # Store executed workflow in session context for future modifications
+                await store_session_context(request.session_id, {
+                    "executed_workflow": result.get("workflow"),
+                    "original_plan": request.current_plan,
+                    "user_id": current_user['user_id'],
+                    "completed_at": time.time(),
+                    "awaiting_approval": False  # No longer awaiting approval
+                })
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=request.session_id,
+                    message="Workflow created successfully! You can now request modifications if needed.",
+                    workflow=result.get("workflow"),
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase
+                )
+            
+            else:
+                # Other phase
+                return TrueReActResponse(
+                    success=True,
+                    session_id=request.session_id,
+                    message=result.get("message", "Processing your response"),
+                    workflow=result.get("workflow"),
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase
+                )
+        
+        else:
+            # Handle error
+            logger.error(f"Plan response handling failed: {result.get('error', 'Unknown error')}")
+            
+            return TrueReActResponse(
+                success=False,
+                session_id=request.session_id,
+                message=result.get("message", "Failed to process your response"),
+                error=result.get("error"),
+                reasoning_trace=result.get("reasoning_trace", []),
+                ui_updates=ui_updates
+            )
+            
+    except Exception as e:
+        duration = time.time() - start_time
+        record_request_time(duration)
+        
+        logger.error(f"Error handling plan response: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to handle plan response: {str(e)}"
         )
 
 @router.get("/true-react/session/{session_id}/updates")

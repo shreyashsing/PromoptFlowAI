@@ -15,6 +15,9 @@ from app.services.auth_tokens import get_auth_token_service, AuthTokenService
 from app.models.database import CreateAuthTokenRequest, UpdateUserProfileRequest
 from app.models.base import AuthType
 from supabase import Client
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -494,3 +497,65 @@ async def oauth_callback(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {str(e)}"
         )
+
+
+@router.post("/test-connector")
+async def test_connector_connection(
+    request: Dict[str, Any],
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Client = Depends(get_database)
+):
+    """Test a connector's authentication and connection."""
+    try:
+        connector_name = request.get("connector_name")
+        if not connector_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="connector_name is required"
+            )
+        
+        # Get the user's tokens for this connector
+        token_service = await get_auth_token_service(db)
+        user_id = current_user["user_id"]
+        
+        # Try to get OAuth2 token first
+        oauth_token = await token_service.get_token(user_id, connector_name, AuthType.OAUTH2)
+        
+        if not oauth_token:
+            return {
+                "success": False,
+                "error": f"No authentication tokens found for {connector_name}. Please authenticate first."
+            }
+        
+        # Test the connection based on connector type
+        if connector_name == "gmail_connector":
+            from app.connectors.core.gmail_connector import GmailConnector
+            
+            connector = GmailConnector()
+            auth_tokens = oauth_token["token_data"]
+            
+            # Test the connection
+            is_connected = await connector.test_connection(auth_tokens)
+            
+            if is_connected:
+                return {
+                    "success": True,
+                    "message": f"{connector_name} connection successful!"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"{connector_name} connection failed. Please re-authenticate."
+                }
+        else:
+            return {
+                "success": False,
+                "error": f"Connection testing not implemented for {connector_name}"
+            }
+            
+    except Exception as e:
+        logger.error(f"Connector test failed: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Connection test failed: {str(e)}"
+        }

@@ -207,16 +207,19 @@ class BaseConnector(ABC):
         
         for attempt in range(max_retries + 1):
             try:
+                # Filter out auth-related parameters that shouldn't be in connector schemas
+                filtered_params = self._filter_auth_parameters(params)
+                
                 # Validate parameters before execution
-                await self.validate_params(params)
+                await self.validate_params(filtered_params)
                 
                 # Validate authentication if required
                 auth_req = await self.get_auth_requirements()
                 if auth_req.type != "none":
                     await self.validate_auth(context.auth_tokens)
                 
-                # Execute the connector
-                result = await self.execute(params, context)
+                # Execute the connector with filtered parameters
+                result = await self.execute(filtered_params, context)
                 
                 if result.success:
                     return result
@@ -245,6 +248,36 @@ class BaseConnector(ABC):
         # All retries failed
         raise last_error or ConnectorException(f"Connector {self.name} failed after {max_retries} retries")
     
+    def _filter_auth_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Filter out authentication-related parameters that shouldn't be in connector schemas.
+        
+        These parameters are handled separately through the ConnectorExecutionContext.auth_tokens
+        and should not be passed as regular connector parameters.
+        
+        Args:
+            params: Original parameters dictionary
+            
+        Returns:
+            Filtered parameters dictionary without auth-related fields
+        """
+        # List of parameter names that should be filtered out
+        auth_param_names = {
+            'auth', 'api_key', 'token', 'access_token', 'refresh_token',
+            'client_id', 'client_secret', 'oauth_token', 'bearer_token',
+            'authorization', 'credentials', 'key', 'secret'
+        }
+        
+        # Filter out auth parameters
+        filtered = {k: v for k, v in params.items() if k.lower() not in auth_param_names}
+        
+        # Log if any parameters were filtered
+        filtered_keys = set(params.keys()) - set(filtered.keys())
+        if filtered_keys:
+            logger.info(f"Filtered auth parameters from {self.name}: {filtered_keys}")
+        
+        return filtered
+
     def get_parameter_hints(self) -> Dict[str, str]:
         """
         Get human-readable hints for connector parameters.

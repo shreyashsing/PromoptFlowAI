@@ -147,6 +147,20 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
           instructions: 'Webhooks support optional signature verification using a secret key. This ensures the webhook payload hasn\'t been tampered with.'
         };
 
+      case 'google_drive':
+        return {
+          type: 'oauth2',
+          fields: {
+            access_token: 'OAuth access token for Google Drive API',
+            refresh_token: 'OAuth refresh token for token renewal'
+          },
+          instructions: 'Google Drive connector requires OAuth authentication with Google. You\'ll need to authorize access to your Google Drive.',
+          oauth_scopes: [
+            'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/drive.file'
+          ]
+        };
+
       case 'text_summarizer':
         return {
           type: 'none',
@@ -454,6 +468,114 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
           }
         ];
 
+      case 'google_drive':
+        return [
+          {
+            name: 'action',
+            label: 'Action',
+            type: 'select',
+            required: true,
+            description: 'Google Drive action to perform',
+            enum: ['list_files', 'create_folder', 'upload_file', 'create_from_text', 'get_file_content', 'delete_file', 'share_file'],
+            defaultValue: 'list_files'
+          },
+          {
+            name: 'file_name',
+            label: 'File Name',
+            type: 'text',
+            required: false,
+            description: 'Name of the file',
+            placeholder: 'document.txt',
+            conditionalOn: { field: 'action', values: ['upload_file', 'create_from_text', 'create_folder'] }
+          },
+          {
+            name: 'text_content',
+            label: 'Text Content',
+            type: 'textarea',
+            required: false,
+            description: 'Content for text file creation',
+            placeholder: 'Enter text content...',
+            conditionalOn: { field: 'action', values: ['create_from_text'] }
+          },
+          {
+            name: 'parent_folder_id',
+            label: 'Parent Folder ID',
+            type: 'text',
+            required: false,
+            description: 'ID of parent folder (use "root" for main folder)',
+            placeholder: 'root',
+            defaultValue: 'root'
+          },
+          {
+            name: 'file_id',
+            label: 'File ID',
+            type: 'text',
+            required: false,
+            description: 'Google Drive file ID',
+            placeholder: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+            conditionalOn: { field: 'action', values: ['get_file_content', 'delete_file', 'share_file'] }
+          },
+          {
+            name: 'query',
+            label: 'Search Query',
+            type: 'text',
+            required: false,
+            description: 'Search query for listing files',
+            placeholder: "name contains 'report'",
+            conditionalOn: { field: 'action', values: ['list_files'] }
+          },
+          {
+            name: 'max_results',
+            label: 'Max Results',
+            type: 'number',
+            required: false,
+            description: 'Maximum number of results',
+            defaultValue: 10,
+            minimum: 1,
+            maximum: 1000,
+            conditionalOn: { field: 'action', values: ['list_files'] }
+          },
+          {
+            name: 'mime_type',
+            label: 'MIME Type',
+            type: 'select',
+            required: false,
+            description: 'File type for created files',
+            enum: ['text/plain', 'application/pdf', 'application/vnd.google-apps.document', 'application/vnd.google-apps.spreadsheet'],
+            defaultValue: 'text/plain',
+            conditionalOn: { field: 'action', values: ['create_from_text', 'upload_file'] }
+          },
+          {
+            name: 'share_type',
+            label: 'Share Type',
+            type: 'select',
+            required: false,
+            description: 'How to share the file',
+            enum: ['anyone', 'domain', 'user'],
+            defaultValue: 'anyone',
+            conditionalOn: { field: 'action', values: ['share_file'] }
+          },
+          {
+            name: 'role',
+            label: 'Permission Role',
+            type: 'select',
+            required: false,
+            description: 'Permission level for sharing',
+            enum: ['reader', 'writer', 'commenter'],
+            defaultValue: 'reader',
+            conditionalOn: { field: 'action', values: ['share_file'] }
+          },
+          {
+            name: 'email',
+            label: 'User Email',
+            type: 'email',
+            required: false,
+            description: 'Email for user-specific sharing',
+            placeholder: 'user@example.com',
+            conditionalOn: { field: 'action', values: ['share_file'] }
+          }
+        ];
+
       case 'text_summarizer':
         return [
           {
@@ -639,17 +761,17 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
     try {
       // Get proper auth headers using Supabase session
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       const headers: { [key: string]: string } = {
         'Content-Type': 'application/json'
       };
-      
+
       if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`;
       } else {
         throw new Error('No active authentication session. Please log in first.');
       }
-      
+
       // Call backend OAuth initiate endpoint
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${baseUrl}/api/v1/auth/oauth/initiate`, {
@@ -743,7 +865,7 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl bg-gray-800 border-gray-600 text-white max-h-[90vh] overflow-hidden">
+      <DialogContent className="max-w-4xl bg-gray-800 border-gray-600 text-white max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
@@ -762,7 +884,7 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
           </TabsList>
 
           <TabsContent value="parameters" className="mt-6">
-            <ScrollArea className="max-h-[60vh] pr-4">
+            <ScrollArea className="max-h-[70vh] pr-4">
               <div className="space-y-6">
                 {fields.filter(shouldShowField).map((field) => (
                   <div key={field.name} className="space-y-2">
@@ -854,7 +976,7 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
           </TabsContent>
 
           <TabsContent value="authentication" className="mt-6">
-            <ScrollArea className="max-h-[60vh] pr-4">
+            <ScrollArea className="max-h-[70vh] pr-4">
               <div className="space-y-6">
                 <div className="flex items-center gap-2 mb-4">
                   <Badge variant={authRequirements.type === 'oauth2' ? 'default' : authRequirements.type === 'api_key' ? 'secondary' : 'outline'}>
@@ -948,7 +1070,7 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
           </TabsContent>
 
           <TabsContent value="test" className="mt-6">
-            <ScrollArea className="max-h-[60vh] pr-4">
+            <ScrollArea className="max-h-[70vh] pr-4">
               <div className="space-y-6">
                 <div className="p-4 bg-gray-700/50 border border-gray-600 rounded-lg">
                   <div className="flex items-start gap-2">
@@ -982,14 +1104,14 @@ export default function StringLikeConnectorModal({ isOpen, onClose, connectorNam
 
                 {connectionStatus !== 'idle' && (
                   <div className={`p-4 rounded-lg border ${connectionStatus === 'success' ? 'bg-green-900/20 border-green-500/30' :
-                      connectionStatus === 'error' ? 'bg-red-900/20 border-red-500/30' :
-                        'bg-blue-900/20 border-blue-500/30'
+                    connectionStatus === 'error' ? 'bg-red-900/20 border-red-500/30' :
+                      'bg-blue-900/20 border-blue-500/30'
                     }`}>
                     <div className="flex items-center gap-2">
                       {getConnectionStatusIcon()}
                       <span className={`text-sm ${connectionStatus === 'success' ? 'text-green-200' :
-                          connectionStatus === 'error' ? 'text-red-200' :
-                            'text-blue-200'
+                        connectionStatus === 'error' ? 'text-red-200' :
+                          'text-blue-200'
                         }`}>
                         {getConnectionStatusText()}
                       </span>

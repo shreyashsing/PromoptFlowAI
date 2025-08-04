@@ -11,10 +11,14 @@ from app.connectors.core import (
     GmailConnector,
     GoogleSheetsConnector,
     WebhookConnector,
-    PerplexityConnector
+    PerplexityConnector,
+    NotionConnector,
+    AirtableConnector
 )
 from app.connectors.core.text_summarizer_connector import TextSummarizerConnector
 from app.connectors.core.parallel_execution_connector import ParallelExecutionConnector
+from app.connectors.core.google_drive_connector import GoogleDriveConnector
+from app.connectors.core.youtube_connector import YouTubeConnector
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +34,13 @@ def register_core_connectors():
         HttpConnector,
         GmailConnector,
         GoogleSheetsConnector,
+        GoogleDriveConnector,
         WebhookConnector,
         PerplexityConnector,
+        NotionConnector,
+        AirtableConnector,
         TextSummarizerConnector,
+        YouTubeConnector,
         ParallelExecutionConnector
     ]
     
@@ -83,6 +91,12 @@ def get_core_connector_info():
             "category": "data_sources", 
             "auth_types": ["oauth"]
         },
+        "googledrive": {
+            "name": "Google Drive Connector",
+            "description": "Upload, download, manage files and folders in Google Drive with full API support",
+            "category": "data_sources",
+            "auth_types": ["oauth"]
+        },
         "webhook": {
             "name": "Webhook Connector",
             "description": "Receive and process external events through webhooks",
@@ -93,6 +107,24 @@ def get_core_connector_info():
             "name": "Perplexity AI Connector",
             "description": "Real-time web-augmented QA and grounded search using Perplexity AI",
             "category": "ai_services",
+            "auth_types": ["api_key"]
+        },
+        "notion": {
+            "name": "Notion Connector",
+            "description": "Interact with Notion workspaces, databases, pages, and blocks with full CRUD operations",
+            "category": "productivity",
+            "auth_types": ["api_key"]
+        },
+        "youtube": {
+            "name": "YouTube Connector",
+            "description": "Comprehensive YouTube API operations using OAuth authentication for channels, playlists, and videos",
+            "category": "social_media",
+            "auth_types": ["oauth"]
+        },
+        "airtable": {
+            "name": "Airtable Connector",
+            "description": "Manage Airtable bases, tables, and records with comprehensive database operations",
+            "category": "data_sources",
             "auth_types": ["api_key"]
         }
     }

@@ -25,6 +25,11 @@ import {
 // Import our new components
 import { ReactAgentWorkflowVisualization } from './ReactAgentWorkflowVisualization';
 import { ConnectorConfigModal } from './ConnectorConfigModal';
+import { NotionConnectorModal } from './connectors/notion/NotionConnectorModal';
+import { GoogleDriveConnectorModal } from './connectors/google_drive/GoogleDriveConnectorModal';
+import { YouTubeConnectorModal } from './connectors/youtube/YouTubeConnectorModal';
+import { AirtableConnectorModal } from './connectors/airtable/AirtableConnectorModal';
+import { GmailConnectorModal } from './connectors/gmail';
 import { useAuth } from '@/lib/auth-context';
 
 interface Message {
@@ -509,15 +514,37 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ mode }) => {
       </div>
 
       {/* Connector Configuration Modal */}
-      <ConnectorConfigModal
-        isOpen={isConfigModalOpen}
-        onClose={() => {
-          setIsConfigModalOpen(false);
-          setSelectedConnector(null);
-        }}
-        connectorName={selectedConnector}
-        onSave={handleConnectorSave}
-      />
+      {isConfigModalOpen && (() => {
+        const modalProps = {
+          isOpen: isConfigModalOpen,
+          onClose: () => {
+            setIsConfigModalOpen(false);
+            setSelectedConnector(null);
+          },
+          onSave: handleConnectorSave
+        };
+
+        // Use specific modals for certain connectors
+        switch (selectedConnector) {
+          case 'notion':
+            return <NotionConnectorModal {...modalProps} />;
+          case 'google_drive':
+            return <GoogleDriveConnectorModal {...modalProps} />;
+          case 'youtube':
+            return <YouTubeConnectorModal {...modalProps} />;
+          case 'airtable':
+            return <AirtableConnectorModal {...modalProps} />;
+          case 'gmail_connector':
+            return <GmailConnectorModal {...modalProps} />;
+          default:
+            return (
+              <ConnectorConfigModal
+                {...modalProps}
+                connectorName={selectedConnector}
+              />
+            );
+        }
+      })()}
     </div>
   );
 };
