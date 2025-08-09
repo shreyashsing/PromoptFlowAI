@@ -25,6 +25,73 @@ class TextSummarizerConnector(BaseConnector):
     def _get_category(self) -> str:
         return "ai_services"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Text Summarizer connector."""
+        return {
+            "text": "This is a long article about artificial intelligence and its impact on society...",
+            "max_length": 150,
+            "style": "concise"
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Text Summarizer-specific example prompts."""
+        return [
+            "Summarize this long article into key points",
+            "Create a brief summary of the meeting notes",
+            "Condense this research paper into main findings",
+            "Generate a concise summary of the blog post",
+            "Summarize the document in bullet points",
+            "Create an executive summary of the report",
+            "Extract key insights from this text"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Text Summarizer-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Extract text to summarize from context or prompt
+        if context and "text" in context:
+            suggestions["text"] = context["text"]
+        elif "this" in prompt_lower and context and "previous_output" in context:
+            suggestions["text"] = str(context["previous_output"])
+        
+        # Determine summary style
+        if "bullet" in prompt_lower or "points" in prompt_lower:
+            suggestions["style"] = "bullet_points"
+        elif "executive" in prompt_lower:
+            suggestions["style"] = "executive"
+        elif "brief" in prompt_lower or "concise" in prompt_lower:
+            suggestions["style"] = "concise"
+        elif "detailed" in prompt_lower:
+            suggestions["style"] = "detailed"
+        else:
+            suggestions["style"] = "concise"
+        
+        # Determine length based on keywords
+        if "brief" in prompt_lower or "short" in prompt_lower:
+            suggestions["max_length"] = 100
+        elif "detailed" in prompt_lower or "comprehensive" in prompt_lower:
+            suggestions["max_length"] = 300
+        else:
+            suggestions["max_length"] = 150
+        
+        # Extract specific length if mentioned
+        import re
+        length_patterns = [
+            r'(\d+)\s+words?',
+            r'in\s+(\d+)\s+words?',
+            r'max\s+(\d+)'
+        ]
+        
+        for pattern in length_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                suggestions["max_length"] = int(match.group(1))
+                break
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

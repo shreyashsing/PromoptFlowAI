@@ -1,5 +1,6 @@
 """
-Tool Registry for managing connector-to-tool conversion for ReAct agent.
+Enhanced Tool Registry for managing connector-to-tool conversion for ReAct agent.
+Combines robust validation with AI-enhanced metadata for better agent performance.
 """
 import logging
 from typing import Dict, Any, List, Optional, Type
@@ -10,6 +11,7 @@ from app.connectors.core.register import register_core_connectors
 from app.connectors.base import BaseConnector
 from app.models.connector import ConnectorMetadata
 from app.services.connector_tool_adapter import ConnectorToolAdapter
+from app.services.dynamic_tool_loader import DynamicToolLoader, get_tool_loader
 from app.core.exceptions import ToolRegistrationError
 
 logger = logging.getLogger(__name__)
@@ -17,33 +19,44 @@ logger = logging.getLogger(__name__)
 
 class ToolRegistry:
     """
-    Manages registration and discovery of connectors as LangGraph tools.
-    Automatically converts existing connectors into tools that can be used by the ReAct agent.
+    Enhanced Tool Registry that combines robust validation with AI-enhanced metadata.
     
-    This class implements the connector discovery and registration system as specified
-    in requirements 2.1 and 2.2.
+    Manages registration and discovery of connectors as LangGraph tools with:
+    - Comprehensive validation and error handling
+    - AI-enhanced metadata for better ReAct agent performance
+    - Relevance scoring and prompt-based tool discovery
+    - Rich descriptions with use cases and examples
+    
+    This enhanced approach provides robust validation with AI intelligence for ReAct agents.
     """
     
-    def __init__(self):
+    def __init__(self, auth_context: Optional[Dict[str, str]] = None):
+        # Original ToolRegistry components
         self.tools: Dict[str, Tool] = {}
         self.adapters: Dict[str, ConnectorToolAdapter] = {}
         self.tool_metadata: Dict[str, Dict[str, Any]] = {}
         self._initialized = False
+        
+        # Enhanced AI components (integrated directly)
+        self.auth_context = auth_context or {}
     
     async def initialize(self) -> None:
         """
-        Initialize the tool registry by discovering and registering connectors.
+        Initialize the enhanced tool registry with both validation and AI-enhanced metadata.
         
-        This method implements the connector discovery system as specified in requirement 2.1:
-        - Discovers available connectors from existing registry
-        - Extracts tool metadata from connector schemas
-        - Automatically registers connectors as tools
+        This method implements:
+        - Original connector discovery and validation (requirement 2.1 & 2.2)
+        - AI-enhanced metadata extraction for better ReAct agent performance
+        - Dynamic tool loading capabilities
         """
         if self._initialized:
             return
             
         try:
-            logger.info("Initializing tool registry...")
+            logger.info("Initializing enhanced tool registry...")
+            
+            # Initialize dynamic tool loader for AI-enhanced features
+            self.dynamic_loader = get_tool_loader(self.auth_context)
             
             # Get connector registry
             connector_registry = get_connector_registry()
@@ -71,14 +84,14 @@ class ToolRegistry:
                         logger.warning(f"Skipping connector '{connector_name}': validation failed")
                         continue
                     
-                    # Extract and store tool metadata
-                    tool_metadata = await self._extract_tool_metadata(connector_name, connector_class, connector_metadata)
+                    # Extract enhanced tool metadata (combines original + AI-enhanced)
+                    tool_metadata = await self._extract_enhanced_tool_metadata(connector_name, connector_class, connector_metadata)
                     self.tool_metadata[connector_name] = tool_metadata
                     
                     # Register connector as tool
                     await self._register_connector_as_tool(connector_name, connector_class)
                     registered_count += 1
-                    logger.info(f"✅ Registered connector '{connector_name}' as tool with metadata")
+                    logger.info(f"✅ Registered connector '{connector_name}' as enhanced tool with AI metadata")
                     
                 except Exception as e:
                     failed_count += 1
@@ -88,11 +101,12 @@ class ToolRegistry:
                     logger.debug(f"Full traceback for {connector_name}: {traceback.format_exc()}")
             
             self._initialized = True
-            logger.info(f"🚀 Tool registry initialized with {registered_count} tools ({failed_count} failed)")
+            logger.info(f"🚀 Enhanced tool registry initialized with {registered_count} tools ({failed_count} failed)")
+            logger.info(f"🤖 AI-enhanced features: relevance scoring, parameter suggestions, rich descriptions")
             
         except Exception as e:
-            logger.error(f"Failed to initialize tool registry: {e}")
-            raise ToolRegistrationError(f"Tool registry initialization failed: {str(e)}")
+            logger.error(f"Failed to initialize enhanced tool registry: {e}")
+            raise ToolRegistrationError(f"Enhanced tool registry initialization failed: {str(e)}")
     
     async def _validate_connector_class(self, connector_name: str, connector_class: Type[BaseConnector]) -> bool:
         """
@@ -227,6 +241,74 @@ class ToolRegistry:
                 "max_retries": 3,
                 "timeout_seconds": 60
             }
+    
+    async def _extract_enhanced_tool_metadata(
+        self, 
+        connector_name: str, 
+        connector_class: Type[BaseConnector], 
+        connector_metadata: ConnectorMetadata
+    ) -> Dict[str, Any]:
+        """
+        Extract enhanced tool metadata combining original validation with AI-enhanced features.
+        
+        This method combines:
+        - Original tool metadata extraction (validation, schema, auth)
+        - AI-enhanced metadata (capabilities, use cases, examples, parameter hints)
+        
+        Args:
+            connector_name: Name of the connector
+            connector_class: Connector class
+            connector_metadata: Connector metadata from registry
+            
+        Returns:
+            Dictionary containing enhanced tool metadata
+        """
+        try:
+            # Get original metadata
+            original_metadata = await self._extract_tool_metadata(connector_name, connector_class, connector_metadata)
+            
+            # Get AI-enhanced metadata from dynamic loader
+            enhanced_metadata = {}
+            if self.dynamic_loader:
+                try:
+                    tool = self.dynamic_loader.load_tool(connector_name)
+                    if tool:
+                        ai_metadata = tool.connector.get_ai_metadata()
+                        enhanced_metadata = {
+                            "ai_description": ai_metadata.get("description", ""),
+                            "capabilities": ai_metadata.get("capabilities", []),
+                            "use_cases": ai_metadata.get("use_cases", []),
+                            "example_prompts": ai_metadata.get("example_prompts", []),
+                            "ai_parameter_hints": ai_metadata.get("parameter_hints", {}),
+                            "supported_operations": ai_metadata.get("supported_operations", []),
+                            "category_enhanced": ai_metadata.get("category", "general")
+                        }
+                        
+                        # Generate parameter suggestions capability
+                        enhanced_metadata["supports_parameter_suggestions"] = hasattr(tool.connector, 'generate_parameter_suggestions')
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to get AI-enhanced metadata for {connector_name}: {str(e)}")
+            
+            # Merge original and enhanced metadata
+            combined_metadata = {**original_metadata, **enhanced_metadata}
+            
+            # Create rich description combining original and AI descriptions
+            descriptions = []
+            if original_metadata.get("description"):
+                descriptions.append(original_metadata["description"])
+            if enhanced_metadata.get("ai_description") and enhanced_metadata["ai_description"] != original_metadata.get("description"):
+                descriptions.append(enhanced_metadata["ai_description"])
+            
+            combined_metadata["rich_description"] = "\n\n".join(descriptions) if descriptions else f"{connector_name} connector"
+            
+            logger.debug(f"Enhanced metadata for tool '{connector_name}': {len(combined_metadata)} fields")
+            return combined_metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to extract enhanced metadata for connector {connector_name}: {e}")
+            # Fallback to original metadata
+            return await self._extract_tool_metadata(connector_name, connector_class, connector_metadata)
 
     async def _register_connector_as_tool(self, connector_name: str, connector_class: Type[BaseConnector]) -> None:
         """
@@ -521,16 +603,224 @@ class ToolRegistry:
     def get_tool_count(self) -> int:
         """Get the number of registered tools."""
         return len(self.tools)
+    
+    # ========================================
+    # AI-Enhanced Methods (from DynamicToolLoader)
+    # ========================================
+    
+    async def get_tools_for_prompt(self, user_prompt: str, max_tools: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get most relevant tools for a user prompt using AI-enhanced relevance scoring.
+        
+        Args:
+            user_prompt: Natural language user request
+            max_tools: Maximum number of tools to return
+            
+        Returns:
+            List of tool metadata with relevance scores
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        if self.dynamic_loader:
+            try:
+                relevant_tools = self.dynamic_loader.get_tools_for_prompt(user_prompt, max_tools)
+                # Convert to metadata format
+                result = []
+                for tool in relevant_tools:
+                    tool_metadata = self.tool_metadata.get(tool.connector_name, {})
+                    tool_metadata["relevance_score"] = getattr(tool, 'relevance_score', 0)
+                    result.append(tool_metadata)
+                return result
+            except Exception as e:
+                logger.warning(f"Failed to get tools for prompt using AI: {str(e)}")
+        
+        # Fallback: return all tools
+        return list(self.tool_metadata.values())[:max_tools]
+    
+    async def get_tools_by_capability(self, capability: str) -> List[Dict[str, Any]]:
+        """
+        Get tools filtered by capability using AI-enhanced metadata.
+        
+        Args:
+            capability: Capability to search for (e.g., "read", "write", "search")
+            
+        Returns:
+            List of tool metadata for tools with the specified capability
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        matching_tools = []
+        for tool_metadata in self.tool_metadata.values():
+            capabilities = tool_metadata.get("capabilities", [])
+            if capability.lower() in [cap.lower() for cap in capabilities]:
+                matching_tools.append(tool_metadata)
+        
+        return matching_tools
+    
+    async def get_tools_by_category(self, category: str) -> List[Dict[str, Any]]:
+        """
+        Get tools filtered by category using enhanced metadata.
+        
+        Args:
+            category: Category name (e.g., 'communication', 'data_sources', 'ai_services')
+            
+        Returns:
+            List of tool metadata for tools in the specified category
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        category_tools = []
+        for tool_metadata in self.tool_metadata.values():
+            # Check both original and enhanced category
+            tool_category = tool_metadata.get("category_enhanced") or tool_metadata.get("category")
+            if tool_category and tool_category.lower() == category.lower():
+                category_tools.append(tool_metadata)
+        
+        return category_tools
+    
+    async def generate_parameter_suggestions(self, tool_name: str, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Generate AI-powered parameter suggestions for a specific tool.
+        
+        Args:
+            tool_name: Name of the tool
+            user_prompt: Natural language user request
+            context: Additional context information
+            
+        Returns:
+            Dictionary with suggested parameter values
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        if self.dynamic_loader:
+            try:
+                tool = self.dynamic_loader.load_tool(tool_name)
+                if tool and hasattr(tool.connector, 'generate_parameter_suggestions'):
+                    return tool.connector.generate_parameter_suggestions(user_prompt, context)
+            except Exception as e:
+                logger.warning(f"Failed to generate parameter suggestions for {tool_name}: {str(e)}")
+        
+        return {}
+    
+    async def get_enhanced_tool_descriptions(self) -> Dict[str, str]:
+        """
+        Get AI-enhanced descriptions for all tools.
+        
+        Returns:
+            Dictionary mapping tool names to enhanced descriptions
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        descriptions = {}
+        for tool_name, metadata in self.tool_metadata.items():
+            # Use rich description if available, fallback to original
+            description = metadata.get("rich_description") or metadata.get("description", f"{tool_name} tool")
+            descriptions[tool_name] = description
+        
+        return descriptions
+    
+    async def get_tool_capabilities_map(self) -> Dict[str, List[str]]:
+        """
+        Get mapping of capabilities to tool names.
+        
+        Returns:
+            Dictionary mapping capabilities to lists of tool names
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        capabilities_map = {}
+        for tool_name, metadata in self.tool_metadata.items():
+            capabilities = metadata.get("capabilities", [])
+            for capability in capabilities:
+                if capability not in capabilities_map:
+                    capabilities_map[capability] = []
+                capabilities_map[capability].append(tool_name)
+        
+        return capabilities_map
+    
+    async def search_tools_enhanced(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Enhanced tool search using AI metadata.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            List of matching tool metadata with relevance scores
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        # Use AI-enhanced search if available
+        if self.dynamic_loader:
+            try:
+                return await self.get_tools_for_prompt(query)
+            except Exception as e:
+                logger.warning(f"AI-enhanced search failed: {str(e)}")
+        
+        # Fallback to basic search
+        return await self.search_tools(query)
+    
+    async def get_tool_usage_examples(self, tool_name: str) -> Dict[str, Any]:
+        """
+        Get usage examples and use cases for a specific tool.
+        
+        Args:
+            tool_name: Name of the tool
+            
+        Returns:
+            Dictionary with examples, use cases, and prompts
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        metadata = self.tool_metadata.get(tool_name, {})
+        
+        return {
+            "tool_name": tool_name,
+            "example_prompts": metadata.get("example_prompts", []),
+            "use_cases": metadata.get("use_cases", []),
+            "example_params": metadata.get("example_params", {}),
+            "parameter_hints": metadata.get("ai_parameter_hints", metadata.get("parameter_hints", {})),
+            "supported_operations": metadata.get("supported_operations", [])
+        }
+    
+    def update_auth_context(self, auth_context: Dict[str, str]):
+        """
+        Update authentication context for enhanced tool loading.
+        
+        Args:
+            auth_context: New authentication context
+        """
+        self.auth_context = auth_context
+        if self.dynamic_loader:
+            self.dynamic_loader.update_auth_context(auth_context)
 
 
 # Global registry instance
 tool_registry: Optional[ToolRegistry] = None
 
 
-async def get_tool_registry() -> ToolRegistry:
-    """Get or create the global tool registry instance."""
+async def get_tool_registry(auth_context: Optional[Dict[str, str]] = None) -> ToolRegistry:
+    """
+    Get or create the global enhanced tool registry instance.
+    
+    Args:
+        auth_context: Optional authentication context for AI-enhanced features
+        
+    Returns:
+        Enhanced ToolRegistry instance with AI capabilities
+    """
     global tool_registry
     if not tool_registry:
-        tool_registry = ToolRegistry()
+        tool_registry = ToolRegistry(auth_context)
         await tool_registry.initialize()
+    elif auth_context:
+        tool_registry.update_auth_context(auth_context)
     return tool_registry

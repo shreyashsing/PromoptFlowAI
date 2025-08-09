@@ -17,6 +17,7 @@ from app.api.workflows_react import router as workflows_react_router
 from app.api.executions import router as executions_router
 from app.api.triggers import router as triggers_router
 from app.api.monitoring import router as monitoring_router
+from app.api.connector_metadata import router as connector_metadata_router
 from app.services.rag import init_rag_system
 # Removed old conversational agent - now using True ReAct Agent
 from app.services.trigger_system import get_trigger_system
@@ -125,6 +126,7 @@ def create_application() -> FastAPI:
     app.include_router(executions_router, prefix="/api/v1")
     app.include_router(triggers_router, prefix="/api/v1")
     app.include_router(monitoring_router, prefix="/api/v1")
+    app.include_router(connector_metadata_router, prefix="/api/v1")
 
     return app
 

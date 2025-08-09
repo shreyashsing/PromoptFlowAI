@@ -3,7 +3,7 @@ HTTP Request Connector - Production implementation with full REST support.
 """
 import asyncio
 import json
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 import httpx
 from urllib.parse import urljoin, urlparse
 
@@ -27,6 +27,68 @@ class HttpConnector(BaseConnector):
     
     def _get_category(self) -> str:
         return "data_sources"
+    
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for HTTP connector."""
+        return {
+            "method": "GET",
+            "url": "https://api.example.com/data",
+            "headers": {"Content-Type": "application/json"}
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get HTTP-specific example prompts."""
+        return [
+            "Make a GET request to fetch user data",
+            "Send a POST request with JSON payload",
+            "Call a REST API endpoint",
+            "Make an HTTP request with custom headers",
+            "Send data to a webhook URL",
+            "Fetch data from an external API",
+            "Make an authenticated API call"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate HTTP-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # HTTP method inference
+        if "get" in prompt_lower or "fetch" in prompt_lower:
+            suggestions["method"] = "GET"
+        elif "post" in prompt_lower or "send" in prompt_lower or "create" in prompt_lower:
+            suggestions["method"] = "POST"
+        elif "put" in prompt_lower or "update" in prompt_lower:
+            suggestions["method"] = "PUT"
+        elif "delete" in prompt_lower:
+            suggestions["method"] = "DELETE"
+        elif "patch" in prompt_lower:
+            suggestions["method"] = "PATCH"
+        
+        # Extract URL
+        import re
+        url_patterns = [
+            r'https?://[^\s]+',
+            r'to\s+(https?://[^\s]+)',
+            r'url\s+(https?://[^\s]+)'
+        ]
+        
+        for pattern in url_patterns:
+            match = re.search(pattern, user_prompt)
+            if match:
+                suggestions["url"] = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                break
+        
+        # Set default headers for JSON requests
+        if "json" in prompt_lower:
+            suggestions["headers"] = {"Content-Type": "application/json"}
+        
+        # Authentication hints
+        if "auth" in prompt_lower or "token" in prompt_lower:
+            suggestions["headers"] = suggestions.get("headers", {})
+            suggestions["headers"]["Authorization"] = "Bearer YOUR_TOKEN_HERE"
+        
+        return suggestions
     
     def _define_schema(self) -> Dict[str, Any]:
         return {

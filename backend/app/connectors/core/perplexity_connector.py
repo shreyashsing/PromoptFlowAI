@@ -27,6 +27,69 @@ class PerplexityConnector(BaseConnector):
     def _get_category(self) -> str:
         return "ai_services"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Perplexity connector."""
+        return {
+            "action": "search",
+            "query": "latest AI developments 2024",
+            "model": "llama-3.1-sonar-small-128k-online"
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Perplexity-specific example prompts."""
+        return [
+            "Search for the latest AI news and developments",
+            "Find recent blog posts about machine learning",
+            "Get current information about cryptocurrency trends",
+            "Search for company announcements from Google",
+            "Find recent articles about climate change",
+            "Get up-to-date information about stock market",
+            "Search for latest technology breakthroughs"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Perplexity-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Default action is search
+        suggestions["action"] = "search"
+        
+        # Use the user prompt as the search query
+        suggestions["query"] = user_prompt
+        
+        # Model selection based on query complexity
+        if len(user_prompt) > 100 or "complex" in prompt_lower or "detailed" in prompt_lower:
+            suggestions["model"] = "llama-3.1-sonar-large-128k-online"
+        else:
+            suggestions["model"] = "llama-3.1-sonar-small-128k-online"
+        
+        # Extract specific search terms
+        import re
+        search_patterns = [
+            r'search.*?for\s+(.+)',
+            r'find.*?about\s+(.+)',
+            r'get.*?information.*?about\s+(.+)',
+            r'latest.*?(.+)'
+        ]
+        
+        for pattern in search_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                search_term = match.group(1).strip()
+                # Clean up the search term
+                search_term = re.sub(r'\s+(and|or|from|in|about)\s+.*$', '', search_term)
+                suggestions["query"] = search_term
+                break
+        
+        # Add time-based modifiers for recent information
+        if any(word in prompt_lower for word in ["latest", "recent", "current", "new", "today", "2024"]):
+            current_query = suggestions.get("query", user_prompt)
+            if "2024" not in current_query:
+                suggestions["query"] = f"{current_query} 2024"
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

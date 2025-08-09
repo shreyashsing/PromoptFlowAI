@@ -28,6 +28,98 @@ class YouTubeConnector(BaseConnector):
     def _get_category(self) -> str:
         return "social_media"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for YouTube connector."""
+        return {
+            "resource": "video",
+            "operation": "video_getAll",
+            "part": ["snippet"],
+            "maxResults": 25
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get YouTube-specific example prompts."""
+        return [
+            "Search for videos about machine learning",
+            "Get my YouTube channel information",
+            "Upload a video to my YouTube channel",
+            "Create a new playlist called 'Tech Tutorials'",
+            "Get all videos from a specific playlist",
+            "Update video title and description",
+            "Get video statistics and analytics"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate YouTube-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # YouTube-specific parameter inference
+        if "video" in prompt_lower:
+            suggestions["resource"] = "video"
+            
+            if "search" in prompt_lower or "find" in prompt_lower:
+                suggestions["operation"] = "video_getAll"
+            elif "upload" in prompt_lower:
+                suggestions["operation"] = "video_upload"
+            elif "get" in prompt_lower or "fetch" in prompt_lower:
+                suggestions["operation"] = "video_get"
+            elif "update" in prompt_lower:
+                suggestions["operation"] = "video_update"
+            elif "delete" in prompt_lower:
+                suggestions["operation"] = "video_delete"
+        
+        elif "channel" in prompt_lower:
+            suggestions["resource"] = "channel"
+            
+            if "get" in prompt_lower or "info" in prompt_lower:
+                suggestions["operation"] = "channel_getAll"
+            elif "update" in prompt_lower:
+                suggestions["operation"] = "channel_update"
+        
+        elif "playlist" in prompt_lower:
+            suggestions["resource"] = "playlist"
+            
+            if "create" in prompt_lower:
+                suggestions["operation"] = "playlist_create"
+            elif "get" in prompt_lower:
+                suggestions["operation"] = "playlist_getAll"
+            elif "update" in prompt_lower:
+                suggestions["operation"] = "playlist_update"
+            elif "delete" in prompt_lower:
+                suggestions["operation"] = "playlist_delete"
+        
+        # Extract title from prompt
+        import re
+        title_patterns = [
+            r'titled?\s+["\']([^"\']+)["\']',
+            r'called\s+["\']([^"\']+)["\']',
+            r'named\s+["\']([^"\']+)["\']'
+        ]
+        
+        for pattern in title_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                suggestions["title"] = match.group(1)
+                break
+        
+        # Extract search query
+        if "search" in prompt_lower or "find" in prompt_lower:
+            # Extract search terms after "for" or "about"
+            search_patterns = [
+                r'search.*?for\s+([^,\.]+)',
+                r'find.*?about\s+([^,\.]+)',
+                r'videos.*?about\s+([^,\.]+)'
+            ]
+            
+            for pattern in search_patterns:
+                match = re.search(pattern, prompt_lower)
+                if match:
+                    suggestions["q"] = match.group(1).strip()
+                    break
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

@@ -26,8 +26,11 @@ import { ConnectorConfigModal } from './ConnectorConfigModal'
 import { NotionConnectorModal } from './connectors/notion/NotionConnectorModal'
 import { GoogleDriveConnectorModal } from './connectors/google_drive/GoogleDriveConnectorModal'
 import { YouTubeConnectorModal } from './connectors/youtube/YouTubeConnectorModal'
+import { CodeConnectorModal } from './connectors/code/CodeConnectorModal'
 import { AirtableConnectorModal } from './connectors/airtable/AirtableConnectorModal'
 import { GmailConnectorModal } from './connectors/gmail'
+
+import { GoogleTranslateConnectorModal } from './connectors/google_translate/GoogleTranslateConnectorModal'
 import {
   Workflow,
   Play,
@@ -587,7 +590,10 @@ export default function InteractiveWorkflowVisualization({
 
       {/* Configuration Modal */}
       {configModalOpen && configNodeId && workflow && (() => {
-        const connectorName = workflow.nodes.find(n => n.id === configNodeId)?.connector_name || null;
+        const node = workflow.nodes.find(n => n.id === configNodeId);
+        const connectorName = node?.connector_name || null;
+        const existingParameters = node?.parameters || {};
+        
         const modalProps = {
           isOpen: configModalOpen,
           onClose: () => {
@@ -596,7 +602,8 @@ export default function InteractiveWorkflowVisualization({
           },
           onSave: async (config: any) => {
             await handleConfigSave(configNodeId, config);
-          }
+          },
+          initialConfig: existingParameters
         };
 
         // Use specific modals for certain connectors
@@ -607,10 +614,16 @@ export default function InteractiveWorkflowVisualization({
             return <GoogleDriveConnectorModal {...modalProps} />;
           case 'youtube':
             return <YouTubeConnectorModal {...modalProps} />;
+          case 'code':
+            return <CodeConnectorModal {...modalProps} />;
           case 'airtable':
             return <AirtableConnectorModal {...modalProps} />;
           case 'gmail_connector':
             return <GmailConnectorModal {...modalProps} />;
+          case 'code':
+            return <CodeConnectorModal {...modalProps} />;
+          case 'google_translate':
+            return <GoogleTranslateConnectorModal {...modalProps} />;
           default:
             return (
               <ConnectorConfigModal

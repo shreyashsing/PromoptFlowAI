@@ -4,7 +4,7 @@ Base connector interface and abstract classes.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 try:
     import jsonschema
     from jsonschema import ValidationError
@@ -302,6 +302,315 @@ class BaseConnector(ABC):
             Dictionary with example parameter values
         """
         return {}
+    
+    # Enhanced AI-friendly metadata methods
+    def get_capabilities(self) -> List[str]:
+        """
+        Get connector capabilities based on schema and operations.
+        Override in subclasses for more specific capabilities.
+        
+        Returns:
+            List of capability strings
+        """
+        capabilities = []
+        schema_props = self.schema.get("properties", {})
+        
+        # Infer capabilities from schema
+        if "action" in schema_props or "operation" in schema_props:
+            action_enum = schema_props.get("action", {}).get("enum", [])
+            operation_enum = schema_props.get("operation", {}).get("enum", [])
+            operations = action_enum + operation_enum
+            
+            # Map operations to capabilities
+            if any(op in operations for op in ["send", "create", "post", "upload", "write"]):
+                capabilities.append("write")
+            if any(op in operations for op in ["get", "read", "list", "fetch", "download"]):
+                capabilities.append("read")
+            if any(op in operations for op in ["update", "modify", "edit", "patch"]):
+                capabilities.append("update")
+            if any(op in operations for op in ["delete", "remove", "trash"]):
+                capabilities.append("delete")
+            if any(op in operations for op in ["search", "find", "query"]):
+                capabilities.append("search")
+        
+        # Add authentication if auth is required
+        if hasattr(self, 'get_auth_requirements'):
+            try:
+                # Skip async check for now to avoid warnings
+                # This will be properly handled when the connector is actually used
+                pass
+            except:
+                pass
+        
+        return capabilities or ["general"]
+    
+    def get_use_cases(self) -> List[Dict[str, Any]]:
+        """
+        Generate use cases based on connector operations and schema.
+        Override in subclasses for more specific use cases.
+        
+        Returns:
+            List of use case dictionaries
+        """
+        use_cases = []
+        schema_props = self.schema.get("properties", {})
+        
+        # Get operations from schema
+        operations = []
+        if "action" in schema_props:
+            operations = schema_props["action"].get("enum", [])
+        elif "operation" in schema_props:
+            operations = schema_props["operation"].get("enum", [])
+        
+        # Generate use cases based on operations
+        operation_templates = {
+            "send": {
+                "title": "Send Data",
+                "description": f"Send data using {self.name}",
+                "category": "communication",
+                "complexity": "simple"
+            },
+            "create": {
+                "title": "Create Resource",
+                "description": f"Create new resources in {self.name}",
+                "category": "data_processing",
+                "complexity": "simple"
+            },
+            "read": {
+                "title": "Read Data",
+                "description": f"Retrieve data from {self.name}",
+                "category": "data_processing",
+                "complexity": "simple"
+            },
+            "search": {
+                "title": "Search Content",
+                "description": f"Search for specific content in {self.name}",
+                "category": "data_processing",
+                "complexity": "intermediate"
+            },
+            "list": {
+                "title": "List Items",
+                "description": f"Get a list of items from {self.name}",
+                "category": "data_processing",
+                "complexity": "simple"
+            },
+            "update": {
+                "title": "Update Data",
+                "description": f"Modify existing data in {self.name}",
+                "category": "data_processing",
+                "complexity": "intermediate"
+            },
+            "delete": {
+                "title": "Delete Data",
+                "description": f"Remove data from {self.name}",
+                "category": "data_processing",
+                "complexity": "simple"
+            }
+        }
+        
+        # Generate use cases for available operations
+        for operation in operations[:5]:  # Limit to first 5 operations
+            template = operation_templates.get(operation.lower())
+            if template:
+                use_case = template.copy()
+                use_case["example_prompts"] = [
+                    f"{operation.title()} data using {self.name}",
+                    f"Use {self.name} to {operation} information"
+                ]
+                use_cases.append(use_case)
+        
+        return use_cases
+    
+    def get_example_prompts(self) -> List[str]:
+        """
+        Generate example user prompts based on connector functionality.
+        Override in subclasses for more specific prompts.
+        
+        Returns:
+            List of example prompt strings
+        """
+        prompts = []
+        schema_props = self.schema.get("properties", {})
+        connector_name = self.name.replace("_", " ").title()
+        
+        # Get operations
+        operations = []
+        if "action" in schema_props:
+            operations = schema_props["action"].get("enum", [])
+        elif "operation" in schema_props:
+            operations = schema_props["operation"].get("enum", [])
+        
+        # Generate prompts based on operations
+        prompt_templates = {
+            "send": f"Send a message using {connector_name}",
+            "create": f"Create a new item in {connector_name}",
+            "read": f"Get information from {connector_name}",
+            "search": f"Search for content in {connector_name}",
+            "list": f"Show me items from {connector_name}",
+            "update": f"Update data in {connector_name}",
+            "delete": f"Remove item from {connector_name}",
+            "get": f"Retrieve data from {connector_name}",
+            "fetch": f"Fetch information using {connector_name}"
+        }
+        
+        for operation in operations[:3]:  # Limit to first 3 operations
+            template = prompt_templates.get(operation.lower())
+            if template:
+                prompts.append(template)
+        
+        # Add generic prompts if no specific operations
+        if not prompts:
+            prompts = [
+                f"Use {connector_name} to process data",
+                f"Connect to {connector_name} and get information",
+                f"Perform operations with {connector_name}"
+            ]
+        
+        return prompts
+    
+    def get_parameter_hints(self) -> Dict[str, str]:
+        """
+        Get AI-friendly parameter hints from schema descriptions.
+        Enhanced version that provides better hints for AI parameter generation.
+        
+        Returns:
+            Dictionary mapping parameter names to AI-friendly hints
+        """
+        hints = {}
+        schema_props = self.schema.get("properties", {})
+        
+        for param_name, param_schema in schema_props.items():
+            description = param_schema.get("description", "")
+            param_type = param_schema.get("type", "string")
+            
+            # Enhanced hints based on parameter patterns
+            if param_name.lower() in ["action", "operation"]:
+                enum_values = param_schema.get("enum", [])
+                hints[param_name] = f"Choose operation: {', '.join(enum_values[:5])}{'...' if len(enum_values) > 5 else ''}"
+            
+            elif param_name.lower() in ["query", "search"]:
+                hints[param_name] = "Convert natural language search to appropriate query format"
+            
+            elif param_name.lower() in ["to", "recipient", "email"]:
+                hints[param_name] = "Extract email addresses from user request, validate format"
+            
+            elif param_name.lower() in ["subject", "title"]:
+                hints[param_name] = "Generate descriptive title based on content or user intent"
+            
+            elif param_name.lower() in ["body", "content", "message"]:
+                hints[param_name] = "Generate appropriate content based on user's message and context"
+            
+            elif param_name.lower() in ["id", "identifier"]:
+                hints[param_name] = "Use ID from previous operations or user-provided identifier"
+            
+            elif param_type == "boolean":
+                hints[param_name] = f"Boolean parameter: {description}"
+            
+            elif param_type == "integer":
+                hints[param_name] = f"Numeric parameter: {description}"
+            
+            else:
+                hints[param_name] = description or f"Parameter for {param_name}"
+        
+        return hints
+    
+    def get_ai_metadata(self) -> Dict[str, Any]:
+        """
+        Get comprehensive AI-friendly metadata for this connector.
+        This is the main method AI agents should use to understand the connector.
+        
+        Returns:
+            Dictionary with all AI-relevant metadata
+        """
+        return {
+            "name": self.name,
+            "display_name": self.name.replace("_", " ").title(),
+            "description": self.description,
+            "category": self.category,
+            "capabilities": self.get_capabilities(),
+            "use_cases": self.get_use_cases(),
+            "example_prompts": self.get_example_prompts(),
+            "parameter_hints": self.get_parameter_hints(),
+            "schema": self.schema,
+            "example_params": self.get_example_params(),
+            "auth_required": self._requires_auth(),
+            "supported_operations": self._get_supported_operations()
+        }
+    
+    def _requires_auth(self) -> bool:
+        """Check if connector requires authentication."""
+        try:
+            # Create a new event loop if none exists
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, we can't use asyncio.run
+                    return False  # Default to False for now
+            except RuntimeError:
+                pass
+            
+            auth_req = asyncio.run(self.get_auth_requirements())
+            return auth_req.type != "none"
+        except:
+            return False
+    
+    def _get_supported_operations(self) -> List[str]:
+        """Get list of supported operations from schema."""
+        schema_props = self.schema.get("properties", {})
+        
+        if "action" in schema_props:
+            return schema_props["action"].get("enum", [])
+        elif "operation" in schema_props:
+            return schema_props["operation"].get("enum", [])
+        
+        return []
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Generate parameter suggestions based on user prompt and context.
+        Override in subclasses for connector-specific logic.
+        
+        Args:
+            user_prompt: Natural language user request
+            context: Additional context information
+            
+        Returns:
+            Dictionary of suggested parameter values
+        """
+        suggestions = {}
+        schema_props = self.schema.get("properties", {})
+        prompt_lower = user_prompt.lower()
+        
+        # Basic parameter inference
+        for param_name, param_schema in schema_props.items():
+            param_type = param_schema.get("type", "string")
+            
+            # Action/operation inference
+            if param_name.lower() in ["action", "operation"]:
+                enum_values = param_schema.get("enum", [])
+                for operation in enum_values:
+                    if operation.lower() in prompt_lower:
+                        suggestions[param_name] = operation
+                        break
+                else:
+                    # Default to first operation if none found
+                    if enum_values:
+                        suggestions[param_name] = enum_values[0]
+            
+            # Boolean parameter inference
+            elif param_type == "boolean":
+                if any(word in prompt_lower for word in ["yes", "true", "enable", "on"]):
+                    suggestions[param_name] = True
+                elif any(word in prompt_lower for word in ["no", "false", "disable", "off"]):
+                    suggestions[param_name] = False
+            
+            # Set defaults for required parameters
+            elif param_name in self.schema.get("required", []):
+                default_value = param_schema.get("default")
+                if default_value is not None:
+                    suggestions[param_name] = default_value
+        
+        return suggestions
     
     async def cleanup(self, context: ConnectorExecutionContext) -> None:
         """

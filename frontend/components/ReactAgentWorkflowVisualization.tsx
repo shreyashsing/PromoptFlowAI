@@ -17,7 +17,8 @@ import {
   Loader2,
   Brain,
   MessageSquare,
-  Wrench
+  Wrench,
+  Code
 } from 'lucide-react';
 
 interface ReasoningStep {
@@ -171,7 +172,8 @@ export const ReactAgentWorkflowVisualization: React.FC<ReactAgentWorkflowVisuali
       'http_request': <Wrench className="h-4 w-4" />,
       'perplexity_search': <Brain className="h-4 w-4" />,
       'text_summarizer': <Brain className="h-4 w-4" />,
-      'webhook': <Wrench className="h-4 w-4" />
+      'webhook': <Wrench className="h-4 w-4" />,
+      'code': <Code className="h-4 w-4" />
     };
     return iconMap[connectorName] || <Wrench className="h-4 w-4" />;
   };

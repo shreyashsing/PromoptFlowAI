@@ -23,7 +23,10 @@ import {
 import { GoogleDriveConnectorModal } from './connectors/google_drive';
 import { NotionConnectorModal } from './connectors/notion';
 import { YouTubeConnectorModal } from './connectors/youtube';
+import { CodeConnectorModal } from './connectors/code';
 import { GmailConnectorModal } from './connectors/gmail';
+
+import { GoogleTranslateConnectorModal } from './connectors/google_translate/GoogleTranslateConnectorModal';
 
 interface ConnectorConfig {
   name: string;
@@ -151,6 +154,18 @@ const CONNECTOR_TEMPLATES: { [key: string]: Partial<ConnectorConfig> } = {
       page_size: 100,
       include_nested_blocks: false
     }
+  },
+  code: {
+    display_name: 'Code',
+    description: 'Execute custom JavaScript or Python code for data manipulation and custom logic',
+    auth_type: 'none',
+    auth_config: {},
+    settings: {
+      language: 'javascript',
+      code: '// Your code here\nreturn inputData;',
+      timeout: 30,
+      safe_mode: true
+    }
   }
 };
 
@@ -160,6 +175,8 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
   connectorName,
   onSave
 }) => {
+  // All connectors should now be properly configurable with the Code connector
+
   // Use specialized modals for specific connectors
   if (connectorName === 'google_drive') {
     return (
@@ -200,6 +217,27 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
       />
     );
   }
+
+  if (connectorName === 'code') {
+    return (
+      <CodeConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
+
+  if (connectorName === 'google_translate') {
+    return (
+      <GoogleTranslateConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+      />
+    );
+  }
+
   const { session } = useAuth();
   const [config, setConfig] = useState<ConnectorConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);

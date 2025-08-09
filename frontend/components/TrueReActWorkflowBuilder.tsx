@@ -10,7 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   CheckCircle, Play, Settings,
   Loader2, Clock, Eye, Layers, Mail, Globe,
-  FileText, Webhook, Database, Sparkles, Brain
+  FileText, Webhook, Database, Sparkles, Brain, Code
 } from 'lucide-react';
 import ReactFlow, {
   Node,
@@ -31,8 +31,11 @@ import StringLikeConnectorModal from '@/components/StringLikeConnectorModal';
 import { GoogleDriveConnectorModal } from '@/components/connectors/google_drive';
 import { NotionConnectorModal } from '@/components/connectors/notion';
 import { YouTubeConnectorModal } from '@/components/connectors/youtube';
+import { CodeConnectorModal } from '@/components/connectors/code';
 import { AirtableConnectorModal } from '@/components/connectors/airtable';
 import { GmailConnectorModal } from '@/components/connectors/gmail';
+
+import { GoogleTranslateConnectorModal } from '@/components/connectors/google_translate';
 
 interface WorkflowStep {
   connector_name: string;
@@ -95,6 +98,7 @@ const ReActWorkflowNode = ({ data, id }: { data: any; id: string }) => {
       case 'text_summarizer': return <FileText className="w-5 h-5" />;
       case 'webhook': return <Webhook className="w-5 h-5" />;
       case 'http_request': return <Globe className="w-5 h-5" />;
+      case 'code': return <Code className="w-5 h-5" />;
       default: return <Layers className="w-5 h-5" />;
     }
   };
@@ -922,6 +926,7 @@ export default function TrueReActWorkflowBuilder() {
             setSelectedConnector(null);
             setSelectedNodeData(null);
           },
+          initialConfig: selectedNodeData?.parameters,
           onSave: async (config: any) => {
             // Handle saving connector configuration
             console.log('Saving connector config:', config);
@@ -976,10 +981,15 @@ export default function TrueReActWorkflowBuilder() {
             return <GoogleDriveConnectorModal {...modalProps} />;
           case 'youtube':
             return <YouTubeConnectorModal {...modalProps} />;
+          case 'code':
+            return <CodeConnectorModal {...modalProps} />;
           case 'airtable':
             return <AirtableConnectorModal {...modalProps} />;
           case 'gmail_connector':
             return <GmailConnectorModal {...modalProps} />;
+
+          case 'google_translate':
+            return <GoogleTranslateConnectorModal {...modalProps} />;
           default:
             return (
               <StringLikeConnectorModal

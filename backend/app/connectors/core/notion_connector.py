@@ -27,6 +27,103 @@ class NotionConnector(BaseConnector):
     def _get_category(self) -> str:
         return "productivity"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Notion connector."""
+        return {
+            "resource": "page",
+            "operation": "create_page",
+            "title": "New Project Plan",
+            "content": "This is the content of the new page."
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Notion-specific example prompts."""
+        return [
+            "Create a new page in Notion with project details",
+            "Get all pages from my Notion workspace",
+            "Search for pages about 'marketing strategy'",
+            "Update the project timeline page",
+            "Create a database entry for the new client",
+            "Get all users in my Notion workspace",
+            "Add content blocks to the meeting notes page"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Notion-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Notion-specific parameter inference
+        if "create" in prompt_lower:
+            if "page" in prompt_lower:
+                suggestions.update({
+                    "resource": "page",
+                    "operation": "create_page"
+                })
+            elif "database" in prompt_lower:
+                suggestions.update({
+                    "resource": "database_page",
+                    "operation": "create_database_page"
+                })
+        
+        elif "get" in prompt_lower or "fetch" in prompt_lower:
+            if "page" in prompt_lower:
+                suggestions.update({
+                    "resource": "page",
+                    "operation": "get_page"
+                })
+            elif "database" in prompt_lower:
+                suggestions.update({
+                    "resource": "database",
+                    "operation": "get_database"
+                })
+            elif "user" in prompt_lower:
+                suggestions.update({
+                    "resource": "user",
+                    "operation": "get_all_users"
+                })
+        
+        elif "search" in prompt_lower:
+            if "page" in prompt_lower:
+                suggestions.update({
+                    "resource": "page",
+                    "operation": "search_pages"
+                })
+            elif "database" in prompt_lower:
+                suggestions.update({
+                    "resource": "database",
+                    "operation": "search_databases"
+                })
+        
+        elif "update" in prompt_lower:
+            if "page" in prompt_lower:
+                suggestions.update({
+                    "resource": "database_page",
+                    "operation": "update_database_page"
+                })
+        
+        elif "add" in prompt_lower and "block" in prompt_lower:
+            suggestions.update({
+                "resource": "block",
+                "operation": "append_block"
+            })
+        
+        # Extract title from prompt
+        import re
+        title_patterns = [
+            r'titled?\s+["\']([^"\']+)["\']',
+            r'called\s+["\']([^"\']+)["\']',
+            r'named\s+["\']([^"\']+)["\']'
+        ]
+        
+        for pattern in title_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                suggestions["title"] = match.group(1)
+                break
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

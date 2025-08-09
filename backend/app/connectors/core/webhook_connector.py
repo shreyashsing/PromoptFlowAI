@@ -29,6 +29,81 @@ class WebhookConnector(BaseConnector):
     def _get_category(self) -> str:
         return "triggers"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Webhook connector."""
+        return {
+            "action": "register",
+            "webhook_url": "https://your-app.com/webhook",
+            "events": ["user.created", "order.completed"]
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Webhook-specific example prompts."""
+        return [
+            "Register a webhook to receive user events",
+            "Set up webhook for order notifications",
+            "Receive webhook data from external service",
+            "List all registered webhooks",
+            "Delete a webhook endpoint",
+            "Test webhook connectivity",
+            "Process incoming webhook payload"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Webhook-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Webhook action inference
+        if "register" in prompt_lower or "create" in prompt_lower or "setup" in prompt_lower:
+            suggestions["action"] = "register"
+        elif "receive" in prompt_lower or "process" in prompt_lower:
+            suggestions["action"] = "receive"
+        elif "list" in prompt_lower or "show" in prompt_lower:
+            suggestions["action"] = "list"
+        elif "delete" in prompt_lower or "remove" in prompt_lower:
+            suggestions["action"] = "delete"
+        elif "test" in prompt_lower:
+            suggestions["action"] = "test"
+        
+        # Extract webhook URL
+        import re
+        url_patterns = [
+            r'https?://[^\s]+',
+            r'webhook.*?url\s+(https?://[^\s]+)',
+            r'endpoint\s+(https?://[^\s]+)'
+        ]
+        
+        for pattern in url_patterns:
+            match = re.search(pattern, user_prompt)
+            if match:
+                suggestions["webhook_url"] = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                break
+        
+        # Extract event types
+        event_patterns = [
+            r'for\s+([a-z_\.]+)\s+events?',
+            r'events?\s+([a-z_\.]+)',
+            r'when\s+([a-z_\.]+)'
+        ]
+        
+        for pattern in event_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                event_type = match.group(1)
+                suggestions["events"] = [event_type]
+                break
+        
+        # Common event types based on keywords
+        if "user" in prompt_lower:
+            suggestions["events"] = ["user.created", "user.updated", "user.deleted"]
+        elif "order" in prompt_lower:
+            suggestions["events"] = ["order.created", "order.completed", "order.cancelled"]
+        elif "payment" in prompt_lower:
+            suggestions["events"] = ["payment.succeeded", "payment.failed"]
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

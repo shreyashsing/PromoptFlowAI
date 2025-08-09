@@ -5,7 +5,7 @@ import { ProtectedRoute } from '../components/auth/ProtectedRoute'
 import { UserMenu } from '../components/auth/UserMenu'
 import { Badge } from '../components/ui/badge'
 import { Separator } from '../components/ui/separator'
-import { Bot, Sparkles, Zap, MessageSquare } from 'lucide-react'
+import { Bot, Sparkles, Zap } from 'lucide-react'
 
 export default function Home() {
 
@@ -33,13 +33,6 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
-                <a 
-                  href="/chat"
-                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-md transition-colors text-sm font-medium flex items-center gap-2"
-                >
-                  <MessageSquare className="w-3 h-3" />
-                  Advanced Chat
-                </a>
                 <Badge variant="secondary" className="bg-slate-800/50 text-slate-300 border-slate-700">
                   <Zap className="w-3 h-3 mr-1" />
                   Beta

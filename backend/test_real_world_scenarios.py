@@ -24,7 +24,7 @@ from uuid import uuid4
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.services.conversational_agent import ConversationalAgent
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
 from app.services.trigger_system import TriggerSystem
 from app.models.base import WorkflowPlan, WorkflowNode, WorkflowEdge, NodePosition
 from app.models.execution import ExecutionStatus
@@ -335,7 +335,7 @@ async def test_email_automation_workflow():
     print("Scenario: Read Gmail inbox and send summary")
     
     # Set up orchestrator and register connectors
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = UnifiedWorkflowOrchestrator()
     orchestrator.connector_registry.register(MockGmailConnector)
     
     # Create workflow
@@ -403,7 +403,7 @@ async def test_data_pipeline_workflow():
     print("Scenario: Process Google Sheets data and email report")
     
     # Set up orchestrator and register connectors
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = UnifiedWorkflowOrchestrator()
     orchestrator.connector_registry.register(MockSheetsConnector)
     orchestrator.connector_registry.register(MockGmailConnector)
     
@@ -471,7 +471,7 @@ async def test_web_monitoring_workflow():
     print("Scenario: Monitor website status and send alerts")
     
     # Set up orchestrator and register connectors
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = UnifiedWorkflowOrchestrator()
     orchestrator.connector_registry.register(MockHTTPConnector)
     orchestrator.connector_registry.register(MockGmailConnector)
     
@@ -539,7 +539,7 @@ async def test_research_workflow():
     print("Scenario: Research topic and compile report")
     
     # Set up orchestrator and register connectors
-    orchestrator = WorkflowOrchestrator()
+    orchestrator = UnifiedWorkflowOrchestrator()
     orchestrator.connector_registry.register(MockPerplexityConnector)
     orchestrator.connector_registry.register(MockGmailConnector)
     

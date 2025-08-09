@@ -3,7 +3,7 @@ Connector registry for managing available connectors.
 """
 import logging
 import inspect
-from typing import Dict, List, Type, Optional, Set
+from typing import Dict, List, Type, Optional, Set, Any
 from app.connectors.base import BaseConnector
 from app.models.connector import ConnectorMetadata
 from app.core.exceptions import ConnectorException, ValidationException
@@ -215,6 +215,136 @@ class ConnectorRegistry:
             List of ConnectorMetadata objects sorted by name
         """
         return sorted(self._metadata.values(), key=lambda x: x.name)
+    
+    def get_ai_metadata(self, name: str) -> Dict[str, Any]:
+        """
+        Get AI-friendly metadata for a specific connector.
+        
+        Args:
+            name: Name of the connector
+            
+        Returns:
+            Dictionary with AI-friendly metadata
+            
+        Raises:
+            ConnectorException: If connector not found
+        """
+        connector = self.create_connector(name)
+        return connector.get_ai_metadata()
+    
+    def get_all_ai_metadata(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get AI-friendly metadata for all registered connectors.
+        
+        Returns:
+            Dictionary mapping connector names to their AI metadata
+        """
+        ai_metadata = {}
+        for name in self.list_connectors():
+            try:
+                connector = self.create_connector(name)
+                ai_metadata[name] = connector.get_ai_metadata()
+            except Exception as e:
+                logger.warning(f"Failed to get AI metadata for {name}: {str(e)}")
+                # Provide basic metadata as fallback
+                if name in self._metadata:
+                    metadata = self._metadata[name]
+                    ai_metadata[name] = {
+                        "name": name,
+                        "display_name": name.replace("_", " ").title(),
+                        "description": metadata.description,
+                        "category": metadata.category,
+                        "capabilities": ["general"],
+                        "use_cases": [],
+                        "example_prompts": [f"Use {name} to process data"],
+                        "parameter_hints": {},
+                        "schema": metadata.parameter_schema,
+                        "example_params": {},
+                        "auth_required": metadata.auth_type != "none",
+                        "supported_operations": []
+                    }
+        
+        return ai_metadata
+    
+    def search_by_capability(self, capability: str) -> List[str]:
+        """
+        Search connectors by capability.
+        
+        Args:
+            capability: Capability to search for (e.g., "read", "write", "search")
+            
+        Returns:
+            List of connector names that have the specified capability
+        """
+        matching_connectors = []
+        
+        for name in self.list_connectors():
+            try:
+                connector = self.create_connector(name)
+                capabilities = connector.get_capabilities()
+                if capability.lower() in [cap.lower() for cap in capabilities]:
+                    matching_connectors.append(name)
+            except Exception as e:
+                logger.warning(f"Failed to check capabilities for {name}: {str(e)}")
+        
+        return sorted(matching_connectors)
+    
+    def get_connectors_for_prompt(self, user_prompt: str) -> List[Dict[str, Any]]:
+        """
+        Get connectors that might be relevant for a user prompt.
+        
+        Args:
+            user_prompt: Natural language user request
+            
+        Returns:
+            List of connector metadata dictionaries with relevance scores
+        """
+        prompt_lower = user_prompt.lower()
+        relevant_connectors = []
+        
+        for name in self.list_connectors():
+            try:
+                connector = self.create_connector(name)
+                ai_metadata = connector.get_ai_metadata()
+                
+                # Calculate relevance score
+                score = 0
+                
+                # Check if connector name matches
+                if name.lower() in prompt_lower:
+                    score += 10
+                
+                # Check if category matches
+                if ai_metadata["category"].lower() in prompt_lower:
+                    score += 5
+                
+                # Check if any capability matches
+                for capability in ai_metadata["capabilities"]:
+                    if capability.lower() in prompt_lower:
+                        score += 3
+                
+                # Check if any operation matches
+                for operation in ai_metadata.get("supported_operations", []):
+                    if operation.lower() in prompt_lower:
+                        score += 4
+                
+                # Check description keywords
+                description_words = ai_metadata["description"].lower().split()
+                for word in description_words:
+                    if len(word) > 3 and word in prompt_lower:
+                        score += 1
+                
+                if score > 0:
+                    ai_metadata["relevance_score"] = score
+                    relevant_connectors.append(ai_metadata)
+                    
+            except Exception as e:
+                logger.warning(f"Failed to analyze relevance for {name}: {str(e)}")
+        
+        # Sort by relevance score
+        relevant_connectors.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+        
+        return relevant_connectors
     
     def search_connectors(self, query: str) -> List[str]:
         """

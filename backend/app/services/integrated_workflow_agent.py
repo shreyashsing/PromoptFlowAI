@@ -21,7 +21,12 @@ from app.models.base import (
 )
 from app.services.react_agent_service import ReactAgentService
 from app.services.tool_registry import ToolRegistry
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
+from app.services.advanced_workflow_intelligence import (
+    AdvancedWorkflowIntelligence, 
+    WorkflowPatternAnalysis,
+    advanced_workflow_intelligence
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +48,8 @@ class IntegratedWorkflowAgent:
     def __init__(self):
         self.react_agent_service = ReactAgentService()
         self.tool_registry = ToolRegistry()
-        self.workflow_orchestrator = WorkflowOrchestrator()
+        self.workflow_orchestrator = UnifiedWorkflowOrchestrator()
+        self.advanced_intelligence = AdvancedWorkflowIntelligence()
         self._client: Optional[AsyncAzureOpenAI] = None
         self._initialized = False
     
@@ -278,11 +284,17 @@ class IntegratedWorkflowAgent:
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        REASON phase: Use True ReAct agent for dynamic reasoning.
-        No hardcoded logic - pure reasoning-based connector discovery.
+        ENHANCED REASON phase: Use advanced workflow intelligence for complex patterns.
+        Supports n8n-style complex workflows with fan-out/fan-in, merging, etc.
         """
         try:
-            # Initialize True ReAct agent
+            # Step 1: Analyze workflow complexity and patterns
+            pattern_analysis = await self.advanced_intelligence.analyze_workflow_complexity(query)
+            
+            logger.info(f"🧠 Workflow Pattern Analysis: {pattern_analysis.primary_pattern.value} "
+                       f"(confidence: {pattern_analysis.complexity_score:.2f})")
+            
+            # Step 2: Use ReAct agent for dynamic reasoning (enhanced with pattern context)
             from app.services.true_react_agent import TrueReActAgent
             from app.services.react_ui_manager import ReActUIManager
             
@@ -292,52 +304,246 @@ class IntegratedWorkflowAgent:
             ui_manager = ReActUIManager()
             session_id = context.get("session_id", "default") if context else "default"
             
-            # Start UI session
+            # Start UI session with enhanced context
             await ui_manager.start_session(session_id, query)
             
-            # Get initial reasoning from ReAct agent
-            initial_analysis = await react_agent.reason_about_requirements(query)
+            # Enhanced reasoning prompt with pattern context
+            enhanced_query = f"""
+            WORKFLOW PATTERN ANALYSIS:
+            - Detected Pattern: {pattern_analysis.primary_pattern.value}
+            - Complexity Score: {pattern_analysis.complexity_score:.2f}
+            - Estimated Nodes: {pattern_analysis.estimated_nodes}
+            - Parallel Branches: {pattern_analysis.parallel_branches}
+            - Merge Points: {pattern_analysis.merge_points}
+            - Suggested Connectors: {', '.join(pattern_analysis.suggested_connectors)}
             
-            # Update UI with reasoning
+            REASONING: {pattern_analysis.reasoning}
+            
+            USER REQUEST: {query}
+            
+            Based on this analysis, reason about the specific connectors and workflow structure needed.
+            """
+            
+            # Get enhanced reasoning from ReAct agent
+            initial_analysis = await react_agent.reason_about_requirements(enhanced_query)
+            
+            # Update UI with enhanced reasoning
+            enhanced_reasoning = f"""
+            🎯 **Workflow Pattern**: {pattern_analysis.primary_pattern.value.title()}
+            📊 **Complexity**: {pattern_analysis.complexity_score:.1%} confidence
+            🔗 **Structure**: {pattern_analysis.estimated_nodes} nodes, {pattern_analysis.parallel_branches} parallel branches
+            
+            💭 **Analysis**: {pattern_analysis.reasoning}
+            
+            🤖 **ReAct Reasoning**: {initial_analysis.get("reasoning", "Analyzing specific implementation...")}
+            """
+            
             await ui_manager.update_reasoning(
                 session_id, 
-                initial_analysis.get("reasoning", "Analyzing requirements..."),
-                "initial_analysis"
+                enhanced_reasoning,
+                "enhanced_pattern_analysis"
             )
             
-            # Convert ReAct analysis to expected format for compatibility
+            # Step 3: Combine pattern analysis with ReAct results
             connectors = []
+            
+            # Use pattern-suggested connectors as base
+            for connector_name in pattern_analysis.suggested_connectors:
+                connectors.append({
+                    "name": connector_name,
+                    "reasoning": f"Suggested by {pattern_analysis.primary_pattern.value} pattern analysis",
+                    "required_fields": self._get_connector_fields(connector_name),
+                    "auth_required": self._check_auth_required(connector_name),
+                    "user_prompt": f"Configure {connector_name} for {pattern_analysis.primary_pattern.value} workflow",
+                    "pattern_role": self._get_connector_pattern_role(connector_name, pattern_analysis)
+                })
+            
+            # Add ReAct-discovered connectors
             if "required_connectors" in initial_analysis:
                 for connector_info in initial_analysis["required_connectors"]:
                     connector_name = connector_info["connector_name"]
                     
-                    connectors.append({
-                        "name": connector_name,
-                        "reasoning": connector_info["purpose"],
-                        "required_fields": list(connector_info.get("parameters", {}).keys()),
-                        "auth_required": self._check_auth_required(connector_name),
-                        "user_prompt": f"Configure {connector_name} for {connector_info['purpose']}"
-                    })
+                    # Avoid duplicates
+                    if not any(c["name"] == connector_name for c in connectors):
+                        connectors.append({
+                            "name": connector_name,
+                            "reasoning": connector_info["purpose"],
+                            "required_fields": list(connector_info.get("parameters", {}).keys()),
+                            "auth_required": self._check_auth_required(connector_name),
+                            "user_prompt": f"Configure {connector_name} for {connector_info['purpose']}",
+                            "pattern_role": "react_discovered"
+                        })
+            
+            # Step 4: Generate enhanced workflow description
+            workflow_description = f"""
+            **{pattern_analysis.primary_pattern.value.title()} Workflow**
+            
+            This workflow follows a {pattern_analysis.primary_pattern.value} pattern with:
+            - {pattern_analysis.estimated_nodes} total nodes
+            - {pattern_analysis.parallel_branches} parallel execution branches
+            - {pattern_analysis.merge_points} data merge points
+            - {len(connectors)} connectors involved
+            
+            **Execution Flow**: {self._describe_execution_flow(pattern_analysis)}
+            
+            **ReAct Analysis**: {initial_analysis.get("workflow_description", "Dynamic workflow structure")}
+            """
             
             reasoning_result = {
-                "reasoning": initial_analysis.get("reasoning", f"ReAct analysis of: {query}"),
+                "reasoning": enhanced_reasoning,
                 "connectors": connectors,
-                "workflow_description": initial_analysis.get("workflow_description", f"Dynamic ReAct workflow for: {query}"),
-                "next_steps": "ReAct agent will build workflow step by step",
+                "workflow_description": workflow_description,
+                "pattern_analysis": pattern_analysis,
+                "next_steps": f"Building {pattern_analysis.primary_pattern.value} workflow with {len(connectors)} connectors",
                 "user_query": query,
                 "context": context or {},
                 "react_analysis": initial_analysis,
-                "session_id": session_id
+                "session_id": session_id,
+                "complexity_score": pattern_analysis.complexity_score,
+                "estimated_execution_time": self._estimate_execution_time(pattern_analysis)
             }
             
-            logger.info(f"ReAct workflow analysis completed: {len(connectors)} connectors identified")
+            logger.info(f"🚀 Enhanced workflow analysis completed: {pattern_analysis.primary_pattern.value} "
+                       f"pattern with {len(connectors)} connectors")
             return reasoning_result
             
         except Exception as e:
-            logger.error(f"Failed in ReAct workflow reasoning: {e}")
+            logger.error(f"Failed in enhanced workflow reasoning: {e}")
             # Fallback to simple reasoning
             return self._fallback_intelligent_reasoning(query, context)
     
+    async def _get_connector_fields(self, connector_name: str) -> List[str]:
+        """Get fields for a connector dynamically from the connector registry."""
+        try:
+            # Get connector metadata from tool registry
+            tools_metadata = await self.tool_registry.get_tool_metadata()
+            
+            # Find the specific connector
+            connector_metadata = next(
+                (tool for tool in tools_metadata if tool.get("name") == connector_name),
+                None
+            )
+            
+            if connector_metadata and "parameters" in connector_metadata:
+                # Extract parameter names from the connector's schema
+                parameters = connector_metadata["parameters"]
+                if isinstance(parameters, dict):
+                    return list(parameters.keys())
+                elif isinstance(parameters, list):
+                    return [param.get("name", "parameter") for param in parameters if isinstance(param, dict)]
+            
+            # Fallback: try to get from connector registry directly
+            from app.connectors.registry import connector_registry
+            connector_class = connector_registry.get_connector(connector_name)
+            
+            if connector_class:
+                # Try to get schema from connector
+                try:
+                    connector_instance = connector_class()
+                    if hasattr(connector_instance, 'get_schema'):
+                        schema = connector_instance.get_schema()
+                        if isinstance(schema, dict) and "properties" in schema:
+                            return list(schema["properties"].keys())
+                except Exception:
+                    pass
+            
+            # Ultimate fallback - return generic fields
+            return ["input", "parameters", "config"]
+            
+        except Exception as e:
+            logger.warning(f"Could not get fields for connector {connector_name}: {e}")
+            return ["parameters"]
+    
+    async def _get_connector_pattern_role(self, connector_name: str, analysis: WorkflowPatternAnalysis) -> str:
+        """Determine the role of a connector in the workflow pattern dynamically."""
+        try:
+            # Get connector metadata from tool registry
+            tools_metadata = await self.tool_registry.get_tool_metadata()
+            
+            # Find the specific connector
+            connector_metadata = next(
+                (tool for tool in tools_metadata if tool.get("name") == connector_name),
+                None
+            )
+            
+            if connector_metadata:
+                # Use category from metadata to determine role
+                category = connector_metadata.get("category", "").lower()
+                description = connector_metadata.get("description", "").lower()
+                
+                # Determine role based on category and description
+                if category in ["data_sources", "apis", "search"]:
+                    return "data_source"
+                elif category in ["communication", "notifications"]:
+                    return "output"
+                elif category in ["productivity", "storage"]:
+                    return "storage"
+                elif category in ["ai_services", "processing"]:
+                    return "processor"
+                elif category in ["triggers", "scheduling"]:
+                    return "trigger"
+                elif "merge" in connector_name.lower() or "combine" in description:
+                    return "merge_node"
+                elif "transform" in connector_name.lower() or "format" in description:
+                    return "processor"
+                elif "schedule" in connector_name.lower() or "trigger" in description:
+                    return "trigger"
+                else:
+                    # Analyze description for role hints
+                    if any(word in description for word in ["send", "notify", "email", "message"]):
+                        return "output"
+                    elif any(word in description for word in ["get", "fetch", "search", "retrieve"]):
+                        return "data_source"
+                    elif any(word in description for word in ["save", "store", "write"]):
+                        return "storage"
+                    else:
+                        return "processor"
+            
+            # Fallback to name-based analysis
+            name_lower = connector_name.lower()
+            if any(word in name_lower for word in ["search", "get", "fetch", "api", "analytics"]):
+                return "data_source"
+            elif any(word in name_lower for word in ["email", "slack", "teams", "notify", "send"]):
+                return "output"
+            elif any(word in name_lower for word in ["sheets", "database", "storage", "save"]):
+                return "storage"
+            elif any(word in name_lower for word in ["merge", "combine", "aggregate"]):
+                return "merge_node"
+            elif any(word in name_lower for word in ["schedule", "trigger", "webhook"]):
+                return "trigger"
+            else:
+                return "processor"
+                
+        except Exception as e:
+            logger.warning(f"Could not determine role for connector {connector_name}: {e}")
+            return "processor"
+    
+    def _describe_execution_flow(self, analysis: WorkflowPatternAnalysis) -> str:
+        """Generate human-readable execution flow description."""
+        if analysis.primary_pattern.name == "MULTI_SOURCE_MERGE":
+            return f"Parallel data collection → Format each source → Merge results → Multiple outputs"
+        elif analysis.primary_pattern.name == "FAN_OUT_FAN_IN":
+            return f"Single trigger → {analysis.parallel_branches} parallel branches → Merge → Continue processing"
+        elif analysis.primary_pattern.name == "SCHEDULED_PIPELINE":
+            return f"Scheduled trigger → Sequential processing → Output"
+        else:
+            return f"Linear processing with {analysis.parallel_branches} parallel sections"
+    
+    def _estimate_execution_time(self, analysis: WorkflowPatternAnalysis) -> str:
+        """Estimate workflow execution time."""
+        base_time = analysis.estimated_nodes * 2  # 2 seconds per node
+        if analysis.parallel_branches > 1:
+            base_time = base_time * 0.6  # Parallel execution is faster
+        
+        if base_time < 10:
+            return "< 10 seconds"
+        elif base_time < 30:
+            return "10-30 seconds"
+        elif base_time < 60:
+            return "30-60 seconds"
+        else:
+            return f"~{base_time//60} minutes"
+
     def _get_connector_display_name(self, connector_name: str) -> str:
         """Get user-friendly display name for connectors."""
         display_names = {
@@ -1571,6 +1777,145 @@ class IntegratedWorkflowAgent:
             nodes=[WorkflowNode(**node) for node in workflow_structure.get("nodes", [])],
             edges=[WorkflowEdge(**edge) for edge in workflow_structure.get("edges", [])],
             triggers=[Trigger(**trigger) for trigger in workflow_structure.get("triggers", [])],
+            status=WorkflowStatus.DRAFT
+        )
+    
+    async def build_complex_workflow_from_analysis(
+        self,
+        reasoning_result: Dict[str, Any],
+        user_id: str,
+        workflow_name: Optional[str] = None
+    ) -> WorkflowPlan:
+        """
+        Build complex n8n-style workflow from advanced pattern analysis.
+        
+        Args:
+            reasoning_result: Result from _reason_about_workflow_requirements
+            user_id: User identifier
+            workflow_name: Optional custom name
+            
+        Returns:
+            Complex WorkflowPlan with advanced patterns
+        """
+        try:
+            # Extract pattern analysis
+            pattern_analysis = reasoning_result.get("pattern_analysis")
+            if not pattern_analysis:
+                # Fallback to simple workflow
+                return await self._create_simple_workflow_fallback(reasoning_result, user_id)
+            
+            logger.info(f"🏗️ Building {pattern_analysis.primary_pattern.value} workflow "
+                       f"with {pattern_analysis.estimated_nodes} nodes")
+            
+            # Use advanced intelligence to generate complex workflow
+            complex_workflow = await self.advanced_intelligence.generate_complex_workflow(
+                pattern_analysis, 
+                reasoning_result["user_query"]
+            )
+            
+            # Enhance with user-specific details
+            complex_workflow.user_id = user_id
+            complex_workflow.name = workflow_name or f"AI-Generated {pattern_analysis.primary_pattern.value.title()} Workflow"
+            complex_workflow.description = f"""
+            Advanced {pattern_analysis.primary_pattern.value} workflow with:
+            • {len(complex_workflow.nodes)} nodes
+            • {pattern_analysis.parallel_branches} parallel branches
+            • {pattern_analysis.merge_points} merge points
+            • Estimated execution time: {reasoning_result.get('estimated_execution_time', 'Unknown')}
+            
+            Generated from: "{reasoning_result['user_query']}"
+            """
+            
+            # Validate and optimize workflow
+            optimized_workflow = await self._optimize_complex_workflow(complex_workflow)
+            
+            logger.info(f"✅ Complex workflow built successfully: {optimized_workflow.name}")
+            return optimized_workflow
+            
+        except Exception as e:
+            logger.error(f"Error building complex workflow: {e}")
+            # Fallback to simple workflow
+            return await self._create_simple_workflow_fallback(reasoning_result, user_id)
+    
+    async def _optimize_complex_workflow(self, workflow: WorkflowPlan) -> WorkflowPlan:
+        """Optimize complex workflow for better execution."""
+        try:
+            # Validate node positions don't overlap
+            self._adjust_node_positions(workflow.nodes)
+            
+            # Ensure proper edge connections
+            self._validate_edge_connections(workflow.nodes, workflow.edges)
+            
+            # Add error handling edges if needed
+            self._add_error_handling(workflow)
+            
+            return workflow
+            
+        except Exception as e:
+            logger.warning(f"Workflow optimization failed: {e}")
+            return workflow  # Return unoptimized workflow
+    
+    def _adjust_node_positions(self, nodes: List[WorkflowNode]) -> None:
+        """Adjust node positions to prevent overlaps."""
+        # Simple grid layout for now
+        cols = 3
+        for i, node in enumerate(nodes):
+            row = i // cols
+            col = i % cols
+            node.position.x = 100 + col * 200
+            node.position.y = 100 + row * 150
+    
+    def _validate_edge_connections(self, nodes: List[WorkflowNode], edges: List[WorkflowEdge]) -> None:
+        """Validate that all edges connect to existing nodes."""
+        node_ids = {node.id for node in nodes}
+        
+        for edge in edges:
+            if edge.source not in node_ids:
+                logger.warning(f"Edge {edge.id} has invalid source: {edge.source}")
+            if edge.target not in node_ids:
+                logger.warning(f"Edge {edge.id} has invalid target: {edge.target}")
+    
+    def _add_error_handling(self, workflow: WorkflowPlan) -> None:
+        """Add basic error handling to workflow."""
+        # For now, just log that error handling could be added
+        logger.debug(f"Error handling could be added to workflow {workflow.id}")
+    
+    async def _create_simple_workflow_fallback(
+        self, 
+        reasoning_result: Dict[str, Any], 
+        user_id: str
+    ) -> WorkflowPlan:
+        """Create simple workflow as fallback when complex generation fails."""
+        connectors = reasoning_result.get("connectors", [])
+        
+        # Create basic linear workflow
+        nodes = []
+        edges = []
+        
+        for i, connector_info in enumerate(connectors[:3]):  # Limit to 3 nodes
+            node = WorkflowNode(
+                id=f"node_{i}",
+                connector_name=connector_info["name"],
+                parameters={},
+                position=NodePosition(x=100 + i * 200, y=200)
+            )
+            nodes.append(node)
+            
+            if i > 0:
+                edge = WorkflowEdge(
+                    id=f"edge_{i-1}_{i}",
+                    source=f"node_{i-1}",
+                    target=f"node_{i}"
+                )
+                edges.append(edge)
+        
+        return WorkflowPlan(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            name="Simple AI Workflow",
+            description=f"Fallback workflow for: {reasoning_result['user_query']}",
+            nodes=nodes,
+            edges=edges,
             status=WorkflowStatus.DRAFT
         )
     

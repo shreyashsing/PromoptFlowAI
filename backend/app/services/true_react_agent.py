@@ -12,6 +12,8 @@ from openai import AsyncAzureOpenAI
 
 from app.core.config import settings
 from app.services.tool_registry import ToolRegistry
+from app.services.workflow_planner import WorkflowPlannerAgent, PlanStep, WorkflowPlanSequence
+from app.services.output_formatter import format_connector_output
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +29,15 @@ class TrueReActAgent:
         self._client: Optional[AsyncAzureOpenAI] = None
         self.current_reasoning = ""
         self.workflow_steps = []
+        self.planner_agent: Optional[WorkflowPlannerAgent] = None
         
-    async def initialize(self):
-        """Initialize the ReAct agent with tool registry and AI client."""
-        # Initialize tool registry
-        self.tool_registry = ToolRegistry()
-        await self.tool_registry.initialize()
+    async def initialize(self, auth_context: Optional[Dict[str, str]] = None):
+        """Initialize the ReAct agent with enhanced tool registry and AI client."""
+        # Initialize enhanced tool registry (combines validation + AI features)
+        from app.services.tool_registry import get_tool_registry
+        self.tool_registry = await get_tool_registry(auth_context)
+        
+        # Dynamic tool loader is now integrated into the enhanced tool registry
         
         # Initialize AI client
         if settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT:
@@ -41,9 +46,14 @@ class TrueReActAgent:
                 api_version=settings.AZURE_OPENAI_API_VERSION,
                 azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
             )
-            logger.info("True ReAct agent initialized successfully")
+            logger.info("True ReAct agent initialized successfully with dynamic tool loader")
         else:
             logger.warning("Azure OpenAI not configured, agent will use fallback reasoning")
+        
+        # Initialize enhanced planner agent
+        self.planner_agent = WorkflowPlannerAgent()
+        await self.planner_agent.initialize(auth_context)
+        logger.info("Enhanced planner agent integrated successfully")
     
     async def determine_if_workflow_needed(self, request: str) -> bool:
         """
@@ -201,11 +211,18 @@ class TrueReActAgent:
     async def reason_about_requirements(self, request: str) -> Dict[str, Any]:
         """Initial reasoning about what the user wants to accomplish."""
         
-        # Get available connectors
-        available_connectors = await self.tool_registry.get_tool_metadata()
+        # Get enhanced connector metadata from enhanced tool registry
+        try:
+            # Use enhanced tool registry's AI-powered tool selection
+            relevant_tools = await self.tool_registry.get_tools_for_prompt(request, max_tools=15)
+            available_connectors = relevant_tools
+        except Exception as e:
+            logger.warning(f"Failed to get AI-enhanced tools, falling back to basic metadata: {str(e)}")
+            # Fallback to basic tool metadata
+            available_connectors = await self.tool_registry.get_tool_metadata()
         
-        # Format connector list for reasoning
-        connector_list = self._format_connector_list(available_connectors)
+        # Format connector list for reasoning with enhanced metadata
+        connector_list = self._format_enhanced_connector_list(available_connectors)
         
         reasoning_prompt = f"""
         I need to analyze this user request like String Alpha does - identify the apps and components required.
@@ -240,37 +257,22 @@ class TrueReActAgent:
     async def reason_next_step(self, initial_analysis: Dict[str, Any], current_steps: List[Dict[str, Any]], original_request: str) -> Optional[Dict[str, Any]]:
         """Reason about what the next step should be."""
         
-        # Get available connectors dynamically from tool registry
-        available_connectors = await self.tool_registry.get_tool_metadata()
+        # Get enhanced connector metadata for next step reasoning
+        try:
+            # Use enhanced tool registry for context-aware tool selection
+            context_prompt = f"{original_request} Current progress: {[step.get('action', '') for step in current_steps]}"
+            relevant_tools = await self.tool_registry.get_tools_for_prompt(context_prompt, max_tools=10)
+            available_connectors = relevant_tools
+        except Exception as e:
+            logger.warning(f"Failed to get context-aware tools: {str(e)}")
+            # Fallback to basic tool metadata
+            available_connectors = await self.tool_registry.get_tool_metadata()
+        
         connector_names = [connector["name"] for connector in available_connectors]
         connector_list = ", ".join(connector_names)
         
-        # Create rich connector descriptions for better AI understanding
-        connector_descriptions = []
-        for connector in available_connectors:
-            name = connector["name"]
-            desc = connector.get("description", "")
-            category = connector.get("category", "")
-            
-            # Build rich description with semantic information
-            rich_desc = f"- **{name}** (Category: {category})"
-            if desc:
-                rich_desc += f"\n  Description: {desc}"
-            
-            # Add capabilities if available
-            if connector.get("capabilities"):
-                rich_desc += f"\n  Capabilities: {', '.join(connector['capabilities'])}"
-            
-            # Add parameter hints for better understanding
-            if connector.get("parameter_hints"):
-                hints = connector["parameter_hints"]
-                if isinstance(hints, dict) and hints:
-                    key_params = list(hints.keys())[:3]  # Show top 3 parameters
-                    rich_desc += f"\n  Key Parameters: {', '.join(key_params)}"
-            
-            connector_descriptions.append(rich_desc)
-        
-        connector_info = "\n".join(connector_descriptions)
+        # Create enhanced connector descriptions
+        connector_info = self._format_enhanced_connector_list(available_connectors)
         
         if not current_steps:
             # First step - what do we need to start with?
@@ -662,8 +664,77 @@ class TrueReActAgent:
     
     async def _create_comprehensive_plan(self, request: str, user_id: str) -> Dict[str, Any]:
         """
-        Create a comprehensive workflow plan using Tool Registry analysis.
-        No hardcoded connectors - fully dynamic based on available tools.
+        Create a comprehensive workflow plan using enhanced planner agent with state machine modeling.
+        This integrates advanced planning capabilities including tool chaining and sequence optimization.
+        """
+        try:
+            logger.info("🧠 Using enhanced planner agent for comprehensive workflow planning")
+            
+            # Use the enhanced planner agent to create a sophisticated plan
+            if self.planner_agent:
+                try:
+                    # Create workflow plan sequence using the advanced planner
+                    plan_sequence = await self.planner_agent.create_workflow_plan(request, user_id)
+                    
+                    # Convert the advanced plan to the format expected by TrueReActAgent
+                    enhanced_plan = await self._convert_planner_sequence_to_plan(plan_sequence)
+                    
+                    logger.info(f"✅ Enhanced planner created {len(enhanced_plan.get('tasks', []))} optimized tasks")
+                    return enhanced_plan
+                    
+                except Exception as e:
+                    logger.warning(f"Enhanced planner failed, falling back to original method: {e}")
+            
+            # Fallback to original planning method if enhanced planner fails
+            return await self._create_original_comprehensive_plan(request, user_id)
+            
+        except Exception as e:
+            logger.error(f"Error in comprehensive planning: {e}")
+            # Final fallback
+            available_tools = []
+            if hasattr(self, 'tool_registry') and self.tool_registry:
+                tools = await self.tool_registry.get_available_tools()
+                available_tools = [tool.name for tool in tools]
+            return await self._create_fallback_plan(request, available_tools)
+    
+    async def _convert_planner_sequence_to_plan(self, plan_sequence: WorkflowPlanSequence) -> Dict[str, Any]:
+        """
+        Convert the enhanced planner's WorkflowPlanSequence to the format expected by TrueReActAgent.
+        This bridges the advanced planner with the existing agent architecture.
+        """
+        tasks = []
+        
+        for step in plan_sequence.steps:
+            task = {
+                "task_number": len(tasks) + 1,
+                "description": step.action_description,
+                "suggested_tool": step.connector_name,
+                "reasoning": f"Enhanced planner selected {step.connector_name} for optimal workflow execution",
+                "inputs": ["data from previous tasks"] if step.dependencies else ["user request"],
+                "outputs": [step.expected_output] if step.expected_output else ["processed data"],
+                "dependencies": step.dependencies,
+                "estimated_duration": step.estimated_duration,
+                "parameters": step.parameters,
+                "step_id": step.id
+            }
+            tasks.append(task)
+        
+        return {
+            "summary": f"Enhanced workflow plan: {plan_sequence.get_sequence_description()}",
+            "tasks": tasks,
+            "data_flow": "Optimized sequence with intelligent tool chaining and dependency resolution",
+            "estimated_steps": len(tasks),
+            "original_request": plan_sequence.user_request,
+            "user_id": plan_sequence.user_id,
+            "created_at": plan_sequence.created_at.isoformat(),
+            "plan_id": plan_sequence.id,
+            "sequence_description": plan_sequence.get_sequence_description(),
+            "enhanced_planning": True
+        }
+    
+    async def _create_original_comprehensive_plan(self, request: str, user_id: str) -> Dict[str, Any]:
+        """
+        Original comprehensive planning method as fallback.
         """
         try:
             # Get available tools from Tool Registry
@@ -693,7 +764,22 @@ class TrueReActAgent:
             1. Break down the user request into logical tasks/steps
             2. For each task, identify which available tool(s) would be most suitable
             3. Consider data flow between tasks (outputs feeding into inputs)
-            4. Ensure all aspects of the user request are covered
+            4. If you need to combine, transform, or process data between steps, use "code" as the suggested_tool
+            5. Ensure all aspects of the user request are covered
+            6. AVOID DUPLICATE TASKS - don't create multiple similar search/retrieval tasks
+            7. OPTIMIZE FOR EFFICIENCY - use the minimum number of steps needed
+            
+            IMPORTANT GUIDELINES:
+            - For data transformation/combination steps that require custom logic, always use "code" as the suggested_tool name
+            - perplexity_search can provide both search results AND content in one step - don't create separate retrieval tasks
+            - Avoid creating multiple perplexity_search tasks unless they serve different purposes
+            - Focus on the essential workflow steps only
+            
+            DYNAMIC CONNECTOR ANALYSIS:
+            - Analyze each connector's description and category to understand its capabilities
+            - Use "code" connector for any data transformation, extraction, or combining tasks
+            - Avoid creating duplicate tasks that serve the same purpose
+            - Consider the data flow: what each connector produces and what the next connector needs
             
             RESPOND WITH THIS JSON FORMAT:
             {{
@@ -702,7 +788,7 @@ class TrueReActAgent:
                     {{
                         "task_number": 1,
                         "description": "What this task does",
-                        "suggested_tool": "tool_name",
+                        "suggested_tool": "tool_name_or_code",
                         "reasoning": "Why this tool is suitable",
                         "inputs": ["what data this task needs"],
                         "outputs": ["what data this task produces"]
@@ -712,12 +798,15 @@ class TrueReActAgent:
                 "estimated_steps": "number of steps"
             }}
             
-            Be thorough and ensure every aspect of the user request is addressed.
+            OPTIMIZE FOR EFFICIENCY - Use the minimum steps needed to accomplish the goal.
             """
+            
+            # Enhance the prompt with dynamic connector analysis
+            enhanced_prompt = await self._add_dynamic_connector_insights(planning_prompt, available_tools, tool_metadata)
             
             # Get AI analysis
             if self._client:
-                ai_response = await self._ai_reason(planning_prompt)
+                ai_response = await self._ai_reason(enhanced_prompt)
                 
                 if isinstance(ai_response, dict):
                     plan = ai_response
@@ -746,8 +835,70 @@ class TrueReActAgent:
             return plan
             
         except Exception as e:
-            logger.error(f"Error creating comprehensive plan: {e}")
+            logger.error(f"Error creating original comprehensive plan: {e}")
             return await self._create_fallback_plan(request, available_tools)
+    
+    async def _add_dynamic_connector_insights(self, base_prompt: str, available_tools: List[str], tool_metadata: Dict[str, Any]) -> str:
+        """
+        Dynamically analyze available connectors and add insights to the planning prompt.
+        This replaces hardcoded connector knowledge with dynamic analysis.
+        """
+        try:
+            # Categorize connectors by their capabilities
+            search_connectors = []
+            data_connectors = []
+            ai_connectors = []
+            communication_connectors = []
+            transformation_connectors = []
+            
+            for tool_name in available_tools:
+                if tool_name not in tool_metadata:
+                    continue
+                    
+                metadata = tool_metadata[tool_name]
+                description = metadata.get('description', '').lower()
+                category = metadata.get('category', '').lower()
+                
+                # Dynamically categorize based on description and category
+                if any(keyword in description for keyword in ['search', 'find', 'query', 'lookup']):
+                    search_connectors.append(tool_name)
+                elif any(keyword in description for keyword in ['summarize', 'analyze', 'process', 'ai', 'llm']):
+                    ai_connectors.append(tool_name)
+                elif any(keyword in description for keyword in ['email', 'send', 'message', 'notify', 'communication']):
+                    communication_connectors.append(tool_name)
+                elif any(keyword in description for keyword in ['data', 'database', 'storage', 'sheet', 'drive']):
+                    data_connectors.append(tool_name)
+                elif tool_name == 'code':
+                    transformation_connectors.append(tool_name)
+            
+            # Build dynamic insights
+            insights = []
+            
+            if search_connectors:
+                insights.append(f"SEARCH CONNECTORS: {', '.join(search_connectors)} - Use for finding/retrieving information")
+            
+            if ai_connectors:
+                insights.append(f"AI PROCESSING CONNECTORS: {', '.join(ai_connectors)} - Use for analysis, summarization, or AI processing")
+            
+            if communication_connectors:
+                insights.append(f"COMMUNICATION CONNECTORS: {', '.join(communication_connectors)} - Use for sending/sharing results")
+            
+            if data_connectors:
+                insights.append(f"DATA CONNECTORS: {', '.join(data_connectors)} - Use for storing or retrieving structured data")
+            
+            if transformation_connectors:
+                insights.append(f"TRANSFORMATION CONNECTORS: {', '.join(transformation_connectors)} - Use for custom data processing, combining, or transformation")
+            
+            # Add insights to the prompt
+            if insights:
+                dynamic_insights = "\n            DYNAMIC CONNECTOR ANALYSIS:\n            " + "\n            ".join(insights)
+                return base_prompt.replace("DYNAMIC CONNECTOR ANALYSIS:", f"DYNAMIC CONNECTOR ANALYSIS:{dynamic_insights}")
+            
+            return base_prompt
+            
+        except Exception as e:
+            logger.error(f"Error adding dynamic connector insights: {e}")
+            return base_prompt
     
     async def _create_fallback_plan(self, request: str, available_tools: List[str]) -> Dict[str, Any]:
         """
@@ -825,18 +976,44 @@ class TrueReActAgent:
     
     def _format_plan_presentation(self, plan: Dict[str, Any]) -> str:
         """
-        Format the workflow plan for user presentation.
+        Format the workflow plan for user presentation with enhanced visualization.
         """
-        message = f"📋 **Workflow Plan**\n\n"
+        message = f"📋 **Enhanced Workflow Plan**\n\n"
+        
+        # Show sequence visualization if available
+        if plan.get('sequence_description'):
+            message += f"**Sequence:** {plan['sequence_description']}\n\n"
+        
         message += f"**Summary:** {plan.get('summary', 'Workflow automation')}\n\n"
+        
+        # Enhanced planning indicator
+        if plan.get('enhanced_planning'):
+            message += "🧠 **Enhanced AI Planning:** This plan uses advanced tool chaining and state machine modeling\n\n"
+        
         message += f"**Planned Tasks ({len(plan.get('tasks', []))}):**\n"
         
         for task in plan.get('tasks', []):
             message += f"{task['task_number']}. **{task['description']}**\n"
             message += f"   - Tool: {task['suggested_tool']}\n"
-            message += f"   - Purpose: {task['reasoning']}\n\n"
+            message += f"   - Purpose: {task['reasoning']}\n"
+            
+            # Show dependencies if available
+            if task.get('dependencies'):
+                message += f"   - Dependencies: {', '.join(task['dependencies'])}\n"
+            
+            # Show estimated duration if available
+            if task.get('estimated_duration'):
+                message += f"   - Duration: ~{task['estimated_duration']}s\n"
+            
+            message += "\n"
         
         message += f"**Data Flow:** {plan.get('data_flow', 'Sequential processing')}\n\n"
+        
+        # Show total estimated time if available
+        total_duration = sum(task.get('estimated_duration', 5) for task in plan.get('tasks', []))
+        if total_duration:
+            message += f"**Estimated Total Time:** ~{total_duration}s\n\n"
+        
         message += "**Please review this plan and respond with:**\n"
         message += "- 'approve' or 'looks good' to proceed\n"
         message += "- Describe any changes you'd like to make\n"
@@ -855,7 +1032,7 @@ class TrueReActAgent:
             
             if intent["action"] == "approve":
                 logger.info("✅ User approved the plan - proceeding with execution")
-                return await self._execute_approved_plan(current_plan, user_id)
+                return await self._execute_approved_enhanced_plan(current_plan, user_id)
             
             elif intent["action"] == "modify":
                 logger.info(f"🔄 User requested changes: {intent['reasoning']}")
@@ -1183,9 +1360,80 @@ class TrueReActAgent:
             logger.error(f"❌ Error refining plan: {e}")
             return current_plan  # Return original plan if refinement fails
     
-    async def _execute_approved_plan(self, plan: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    async def _execute_approved_enhanced_plan(self, plan: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         """
-        Execute the approved workflow plan task by task.
+        Execute the approved workflow plan using enhanced orchestration with state machine modeling.
+        This method leverages the advanced workflow orchestrator for optimal execution.
+        """
+        try:
+            logger.info(f"🚀 Executing enhanced plan with {len(plan.get('tasks', []))} tasks")
+            
+            # Check if this is an enhanced plan that can use the advanced orchestrator
+            if plan.get('enhanced_planning') and plan.get('plan_id'):
+                return await self._execute_with_advanced_orchestrator(plan, user_id)
+            else:
+                # Fallback to original execution method
+                return await self._execute_approved_plan_original(plan, user_id)
+                
+        except Exception as e:
+            logger.error(f"Error executing enhanced plan: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "reasoning_trace": self.get_reasoning_trace()
+            }
+    
+    async def _execute_with_advanced_orchestrator(self, plan: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+        """
+        Execute plan using the advanced workflow orchestrator with state machine modeling.
+        """
+        try:
+            logger.info("🧠 Using advanced workflow orchestrator for enhanced execution")
+            
+            # Get the planner's workflow plan if available
+            if self.planner_agent and plan.get('plan_id'):
+                workflow_plan = await self.planner_agent.get_approved_workflow_plan(plan['plan_id'])
+                
+                if workflow_plan:
+                    # Use the unified workflow orchestrator
+                    from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
+                    orchestrator = UnifiedWorkflowOrchestrator()
+                    
+                    execution_result = await orchestrator.execute_workflow(
+                        workflow_plan, 
+                        user_id, 
+                        auth_context={}
+                    )
+                    
+                    # Mark plan as completed in planner
+                    await self.planner_agent.mark_plan_completed(
+                        plan['plan_id'], 
+                        success=(execution_result.status.value == "completed")
+                    )
+                    
+                    return {
+                        "success": True,
+                        "phase": "completed",
+                        "execution_id": execution_result.execution_id,
+                        "status": execution_result.status.value,
+                        "workflow": execution_result.final_output,
+                        "sequence_executed": plan.get('sequence_description', ''),
+                        "enhanced_execution": True,
+                        "reasoning_trace": self.get_reasoning_trace(),
+                        "original_plan": plan
+                    }
+            
+            # Fallback if advanced orchestrator fails
+            logger.warning("Advanced orchestrator unavailable, falling back to original execution")
+            return await self._execute_approved_plan_original(plan, user_id)
+            
+        except Exception as e:
+            logger.error(f"Advanced orchestrator execution failed: {e}")
+            return await self._execute_approved_plan_original(plan, user_id)
+    
+    async def _execute_approved_plan_original(self, plan: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+        """
+        Original execution method as fallback.
         """
         try:
             logger.info(f"🚀 Executing approved plan with {len(plan.get('tasks', []))} tasks")
@@ -1235,6 +1483,25 @@ class TrueReActAgent:
                 logger.warning(f"No tool specified for task: {task}")
                 return None
             
+            # Handle Code connector for data processing tasks
+            if tool_name == 'code':
+                logger.info(f"🔧 Configuring Code connector for data transformation: {task.get('description', 'Data processing')}")
+                
+                # Generate appropriate code based on the task description
+                code_parameters = await self._generate_code_parameters(task, previous_steps, plan)
+                
+                step_result = {
+                    "connector_name": "code",
+                    "parameters": code_parameters,
+                    "purpose": task.get('description', 'Code execution for data processing'),
+                    "task_number": task.get('task_number'),
+                    "reasoning": task.get('reasoning', 'Custom code execution for data transformation'),
+                    "dependencies": self._extract_dependencies(code_parameters, previous_steps),
+                    "step_number": len(previous_steps) + 1
+                }
+                
+                return step_result
+            
             # Create reasoning context for this task
             reasoning_context = {
                 "task": task,
@@ -1268,6 +1535,469 @@ class TrueReActAgent:
             logger.error(f"Error executing planned task: {e}")
             return None
     
+    async def _generate_ai_code_with_context(self, task: Dict[str, Any], previous_steps: List[Dict[str, Any]], plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generate AI code using the enhanced Code connector AI generator with intelligent decision making."""
+        try:
+            from app.connectors.core.code_connector import CodeConnector
+            from app.services.intelligent_code_decision import get_intelligent_code_decision
+            
+            # First, intelligently decide if code generation is actually needed
+            decision_system = await get_intelligent_code_decision()
+            
+            user_request = task.get('description', '') or task.get('action', '')
+            available_connectors = await self._get_available_connector_names()
+            
+            # Analyze if code is truly needed
+            decision = await decision_system.should_generate_code(
+                user_request, 
+                available_connectors,
+                {"task": task, "previous_steps": previous_steps, "plan": plan}
+            )
+            
+            logger.info(f"Code generation decision: {decision}")
+            
+            # If code is not needed, return None to let other connectors handle it
+            if not decision.get("needs_code", False):
+                logger.info(f"Code generation not needed: {decision.get('reasoning')}")
+                logger.info(f"Alternative connectors suggested: {decision.get('alternative_connectors')}")
+                return None
+            
+            # If code is needed and confidence is high enough, generate it
+            if decision.get("confidence", 0) < 0.6:
+                logger.warning(f"Low confidence for code generation: {decision.get('confidence')}")
+                return None
+            
+            # Create a Code connector instance
+            code_connector = CodeConnector()
+            
+            # Build context from task and previous steps
+            context = {
+                "task": task,
+                "previous_steps": previous_steps,
+                "plan": plan,
+                "workflow_context": True,
+                "decision_analysis": decision
+            }
+            
+            # Extract previous results for context
+            if previous_steps:
+                latest_step = previous_steps[-1]
+                if "result" in latest_step:
+                    context["previous_results"] = {"items": [latest_step["result"]]}
+            
+            # Generate AI-powered code
+            ai_params = await code_connector.generate_ai_code(user_request, context)
+            
+            # Validate the generated code
+            if ai_params.get("code"):
+                validation = await decision_system.validate_generated_code(
+                    ai_params["code"],
+                    user_request,
+                    ai_params.get("language", "javascript")
+                )
+                
+                # If code doesn't address the request well, don't use it
+                if not validation.get("addresses_request", False):
+                    logger.warning(f"Generated code doesn't address request well: {validation}")
+                    return None
+                
+                # Add validation results to metadata
+                ai_params["_validation"] = validation
+            
+            # Add Code connector specific parameters
+            ai_params.update({
+                "timeout": 30,
+                "safe_mode": True,
+                "return_console_output": True,
+                "_decision_reasoning": decision.get("reasoning"),
+                "_code_complexity": decision.get("code_complexity"),
+                "_risk_assessment": decision.get("risk_assessment")
+            })
+            
+            logger.info(f"Generated AI code for task: {task.get('description', '')}")
+            logger.info(f"AI confidence: {ai_params.get('_ai_confidence', 'unknown')}")
+            logger.info(f"Decision confidence: {decision.get('confidence')}")
+            
+            return ai_params
+            
+        except Exception as e:
+            logger.error(f"AI code generation failed: {str(e)}")
+            return None
+    
+    async def _get_available_connector_names(self) -> List[str]:
+        """Get list of available connector names."""
+        try:
+            if self.tool_registry:
+                tools = await self.tool_registry.get_tool_metadata()
+                return [tool.name for tool in tools]
+            return []
+        except Exception as e:
+            logger.error(f"Failed to get connector names: {str(e)}")
+            return ["gmail", "google_sheets", "google_drive", "notion", "airtable", "http", "perplexity"]
+    
+    async def _generate_code_parameters(self, task: Dict[str, Any], previous_steps: List[Dict[str, Any]], plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate appropriate code parameters for data transformation tasks using AI reasoning."""
+        try:
+            task_description = task.get('description', '').lower()
+            
+            # Use enhanced AI code generator for Code connector
+            if self._client:
+                ai_code_result = await self._generate_ai_code_with_context(task, previous_steps, plan)
+                if ai_code_result:
+                    return ai_code_result
+            
+            # Use AI to generate custom code if available (fallback)
+            if self._client:
+                custom_code = await self._ai_generate_code(task, previous_steps, plan)
+                if custom_code:
+                    return custom_code
+            
+            # Fallback to pattern-based code generation
+            if 'combine' in task_description or 'merge' in task_description:
+                # Code for combining multiple items with robust data structure handling
+                code = """// Combine multiple items into a single text block
+// CRITICAL: Extract actual data from the main wrapper
+let actualData = inputData.main || inputData;
+
+// First, inspect the input data structure
+console.log('Input data structure:', typeof actualData, Object.keys(actualData || {}));
+
+let items = [];
+let combinedText = '';
+
+// Try to find array data in various possible structures
+if (Array.isArray(actualData)) {
+    items = actualData;
+} else if (actualData && typeof actualData === 'object') {
+    // Look for common array property names
+    const possibleArrays = ['items', 'posts', 'results', 'data', 'content', 'blogs', 'articles'];
+    for (const prop of possibleArrays) {
+        if (Array.isArray(actualData[prop])) {
+            items = actualData[prop];
+            break;
+        }
+    }
+    
+    // If no array found, try to extract values
+    if (items.length === 0) {
+        const values = Object.values(actualData);
+        for (const value of values) {
+            if (Array.isArray(value)) {
+                items = value;
+                break;
+            }
+        }
+    }
+    
+    // If still no array, treat the object itself as a single item
+    if (items.length === 0) {
+        items = [actualData];
+    }
+} else {
+    // Handle primitive types
+    items = [actualData];
+}
+
+// Process each item
+items.forEach((item, index) => {
+    if (item && typeof item === 'object') {
+        // Try common text properties
+        const title = item.title || item.name || item.subject || item.heading || `Item ${index + 1}`;
+        const content = item.content || item.text || item.body || item.description || item.summary || JSON.stringify(item);
+        
+        combinedText += `${title}\\n`;
+        combinedText += `${content}\\n\\n`;
+    } else if (typeof item === 'string') {
+        combinedText += `${item}\\n\\n`;
+    } else {
+        combinedText += `${JSON.stringify(item)}\\n\\n`;
+    }
+});
+
+return {
+    combined_text: combinedText.trim(),
+    total_items: items.length,
+    processed_at: new Date().toISOString(),
+    input_structure: typeof actualData,
+    found_items: items.length > 0
+};"""
+            
+            elif 'transform' in task_description or 'process' in task_description:
+                # Generic data transformation code
+                code = """// Transform and process input data
+// CRITICAL: Extract actual data from the main wrapper
+let actualData = inputData.main || inputData;
+const data = actualData;
+let result = {};
+
+// Process the data based on its structure
+if (Array.isArray(data)) {
+    result = {
+        processed_items: data.map((item, index) => ({
+            index: index + 1,
+            data: item,
+            processed: true
+        })),
+        total_count: data.length
+    };
+} else if (typeof data === 'object') {
+    result = {
+        ...data,
+        processed: true,
+        processed_at: new Date().toISOString()
+    };
+} else {
+    result = {
+        original_data: data,
+        processed: true,
+        processed_at: new Date().toISOString()
+    };
+}
+
+return result;"""
+            
+            else:
+                # Default passthrough with processing metadata
+                code = """// Process input data and add metadata
+// CRITICAL: Extract actual data from the main wrapper
+let actualData = inputData.main || inputData;
+const data = actualData;
+
+return {
+    data: data,
+    processed: true,
+    processed_at: new Date().toISOString(),
+    step_info: 'Data processed by Code connector'
+};"""
+            
+            # Validate and fix the fallback code as well
+            validated_code = await self._validate_and_fix_javascript(code)
+            
+            return {
+                "language": "javascript",
+                "code": validated_code,
+                "input_data": {},  # Will be populated with actual data during execution
+                "timeout": 30,
+                "safe_mode": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating code parameters: {e}")
+            # Fallback to simple passthrough code
+            fallback_code = "let actualData = inputData.main || inputData; return actualData;"
+            validated_fallback = await self._validate_and_fix_javascript(fallback_code)
+            
+            return {
+                "language": "javascript", 
+                "code": validated_fallback,
+                "input_data": {},
+                "timeout": 30,
+                "safe_mode": True
+            }
+    
+    async def _ai_generate_code(self, task: Dict[str, Any], previous_steps: List[Dict[str, Any]], plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Use AI to generate custom code for the specific task context."""
+        try:
+            # Get context about previous steps
+            previous_context = ""
+            if previous_steps:
+                previous_context = "Previous workflow steps:\n"
+                for i, step in enumerate(previous_steps, 1):
+                    previous_context += f"{i}. {step.get('connector_name', 'Unknown')}: {step.get('purpose', 'No description')}\n"
+            
+            # Create AI prompt for code generation
+            code_prompt = f"""
+            TASK: Generate JavaScript code for a workflow data transformation step.
+            
+            TASK DESCRIPTION: {task.get('description', 'Process data')}
+            TASK REASONING: {task.get('reasoning', 'Data transformation needed')}
+            
+            {previous_context}
+            
+            CONTEXT: This code will receive data from the previous step via 'inputData' variable.
+            The code should process this data and return the result for the next step.
+            
+            CRITICAL DATA STRUCTURE: The inputData is wrapped in a 'main' key like this:
+            inputData = {{ main: {{ actualData }} }}
+            
+            You MUST extract the actual data first:
+            let actualData = inputData.main || inputData;
+            
+            GENERAL DATA PROCESSING: When processing data from any connector:
+            - Inspect the actualData structure to understand what fields are available
+            - Extract the relevant content based on the task requirements
+            - Handle different data formats (objects, arrays, strings) gracefully
+            - Focus on extracting meaningful content rather than metadata
+            
+            REQUIREMENTS:
+            1. Use JavaScript (ES6+)
+            2. ALWAYS extract actual data: let actualData = inputData.main || inputData;
+            3. Work with actualData, not inputData directly
+            4. Return a JavaScript object with the processed result
+            5. Handle different data structures gracefully (arrays, objects, strings)
+            6. Add helpful metadata like timestamps, counts, etc.
+            7. IMPORTANT: Don't assume specific property names - inspect the data structure first
+            
+            EXAMPLE PATTERNS:
+            - Extract data: let actualData = inputData.main || inputData;
+            - Combining multiple items: First check what properties exist in actualData, then iterate
+            - Data transformation: Inspect actualData structure, then modify/add fields
+            - Text processing: Handle both string and object inputs from actualData
+            
+            CRITICAL: Always start with: let actualData = inputData.main || inputData;
+            Then inspect the actualData structure before accessing properties.
+            Use defensive programming - check if properties exist before using them.
+            
+            Generate ONLY the JavaScript code (no explanations, no markdown):
+            """
+            
+            response = await self._ai_reason(code_prompt)
+            
+            # Handle both JSON and raw text responses
+            generated_code = None
+            if isinstance(response, dict):
+                if 'content' in response:
+                    generated_code = response['content'].strip()
+                elif 'code' in response:
+                    generated_code = response['code'].strip()
+            elif isinstance(response, str):
+                generated_code = response.strip()
+            
+            if generated_code:
+                # Clean up the code (remove markdown formatting if present)
+                if generated_code.startswith('```javascript'):
+                    generated_code = generated_code.replace('```javascript', '').replace('```', '').strip()
+                elif generated_code.startswith('```'):
+                    generated_code = generated_code.replace('```', '').strip()
+                
+                # Validate and auto-correct the JavaScript code
+                validated_code = await self._validate_and_fix_javascript(generated_code)
+                
+                # Validate that it looks like JavaScript code
+                if validated_code and ('inputData' in validated_code or 'return' in validated_code):
+                    return {
+                        "language": "javascript",
+                        "code": validated_code,
+                        "input_data": {},
+                        "timeout": 30,
+                        "safe_mode": True
+                    }
+            
+            return None  # Fall back to pattern-based generation
+            
+        except Exception as e:
+            logger.error(f"AI code generation failed: {e}")
+            return None  # Fall back to pattern-based generation
+    
+    async def _validate_and_fix_javascript(self, code: str) -> str:
+        """
+        Validate JavaScript code and automatically fix common syntax errors.
+        This implements intelligent code correction similar to Cursor/Kiro AI.
+        """
+        try:
+            # First, try basic syntax validation and auto-fixes
+            fixed_code = await self._apply_common_js_fixes(code)
+            
+            # If we have AI available, use it for more sophisticated fixes
+            if self._client:
+                validated_code = await self._ai_validate_and_fix_code(fixed_code)
+                if validated_code:
+                    return validated_code
+            
+            return fixed_code
+            
+        except Exception as e:
+            logger.error(f"Code validation failed: {e}")
+            return code  # Return original code if validation fails
+    
+    async def _apply_common_js_fixes(self, code: str) -> str:
+        """Apply common JavaScript syntax fixes."""
+        fixed_code = code
+        
+        # Fix 1: If code uses 'await' but function isn't async, wrap in async function
+        if 'await ' in fixed_code and 'async ' not in fixed_code:
+            logger.info("🔧 Auto-fixing: Adding async wrapper for await usage")
+            # Wrap the entire code in an async function
+            fixed_code = f"""(async function() {{
+{fixed_code}
+}})();"""
+        
+        # Fix 2: Ensure proper return statement structure
+        if 'return' not in fixed_code and not fixed_code.strip().endswith(';'):
+            # If no return statement, assume the last expression should be returned
+            lines = fixed_code.strip().split('\n')
+            if lines and not lines[-1].strip().startswith('return'):
+                last_line = lines[-1].strip()
+                if last_line and not last_line.endswith(';'):
+                    lines[-1] = f"return {last_line};"
+                    fixed_code = '\n'.join(lines)
+        
+        # Fix 3: Handle common variable declaration issues
+        fixed_code = fixed_code.replace('let actualData = inputData.main || inputData;', 
+                                      'let actualData = (inputData && inputData.main) ? inputData.main : inputData;')
+        
+        # Fix 4: Ensure proper error handling for external API calls
+        if 'fetch(' in fixed_code and 'try' not in fixed_code:
+            logger.info("🔧 Auto-fixing: Adding error handling for fetch calls")
+            # This is a more complex fix that would require parsing, so we'll handle it in AI validation
+        
+        return fixed_code
+    
+    async def _ai_validate_and_fix_code(self, code: str) -> str:
+        """Use AI to validate and fix JavaScript code syntax errors."""
+        try:
+            validation_prompt = f"""
+TASK: Validate and fix JavaScript code syntax errors.
+
+ORIGINAL CODE:
+```javascript
+{code}
+```
+
+REQUIREMENTS:
+1. Fix any syntax errors (missing async, improper await usage, etc.)
+2. Ensure the code is valid JavaScript that can run in Node.js
+3. Maintain the original functionality and logic
+4. Add proper error handling for external API calls
+5. Ensure variables are properly declared
+6. Make sure the code handles the inputData structure correctly
+
+COMMON ISSUES TO FIX:
+- Using 'await' without 'async' function
+- Missing variable declarations
+- Improper error handling
+- Syntax errors in loops or conditionals
+
+Return ONLY the corrected JavaScript code (no explanations, no markdown):
+"""
+            
+            response = await self._ai_reason(validation_prompt)
+            
+            if isinstance(response, dict) and 'content' in response:
+                fixed_code = response['content'].strip()
+            elif isinstance(response, str):
+                fixed_code = response.strip()
+            else:
+                return code
+            
+            # Clean up any markdown formatting
+            if fixed_code.startswith('```javascript'):
+                fixed_code = fixed_code.replace('```javascript', '').replace('```', '').strip()
+            elif fixed_code.startswith('```'):
+                fixed_code = fixed_code.replace('```', '').strip()
+            
+            # Basic validation - ensure it still contains key elements
+            if 'inputData' in fixed_code or 'return' in fixed_code:
+                logger.info("🎉 AI successfully validated and fixed JavaScript code")
+                return fixed_code
+            else:
+                logger.warning("AI validation removed essential code elements, using original")
+                return code
+                
+        except Exception as e:
+            logger.error(f"AI code validation failed: {e}")
+            return code
+    
     async def build_final_workflow(self, steps: List[Dict[str, Any]], request: str) -> Dict[str, Any]:
         """Build the final workflow from the completed steps."""
         
@@ -1283,6 +2013,46 @@ class TrueReActAgent:
     def get_reasoning_trace(self) -> List[str]:
         """Get the trace of reasoning steps for debugging/transparency."""
         return [self.current_reasoning]
+    
+    def _format_enhanced_connector_list(self, connectors: List[Dict[str, Any]]) -> str:
+        """Format connectors with enhanced metadata for AI reasoning."""
+        formatted_connectors = []
+        
+        for connector in connectors:
+            name = connector.get("name", "")
+            description = connector.get("description", "")
+            category = connector.get("category", "")
+            capabilities = connector.get("capabilities", [])
+            use_cases = connector.get("use_cases", [])
+            examples = connector.get("examples", [])
+            relevance_score = connector.get("relevance_score", 0)
+            
+            # Build rich description
+            parts = [f"**{name}**"]
+            
+            if category:
+                parts.append(f"Category: {category}")
+            
+            if relevance_score > 0:
+                parts.append(f"Relevance: {relevance_score}/10")
+            
+            if capabilities:
+                parts.append(f"Capabilities: {', '.join(capabilities)}")
+            
+            if description:
+                # Truncate long descriptions
+                desc = description[:200] + "..." if len(description) > 200 else description
+                parts.append(f"Description: {desc}")
+            
+            if use_cases:
+                parts.append(f"Use Cases: {', '.join(use_cases[:3])}")
+            
+            if examples:
+                parts.append(f"Examples: {'; '.join(examples[:2])}")
+            
+            formatted_connectors.append("\n  ".join(parts))
+        
+        return "\n\n".join(formatted_connectors)
     
     async def _analyze_connector_semantic_fit(self, connector: Dict[str, Any], user_intent: str, context: str = "") -> float:
         """
@@ -1687,11 +2457,26 @@ class TrueReActAgent:
             # 5. Content/text parameters (data flow)
             elif any(keyword in param_name.lower() for keyword in ['content', 'text', 'body', 'data', 'input']):
                 if current_steps:
-                    # Reference the most relevant previous step
+                    # Reference the most relevant previous step with intelligent field selection
                     if 'body' in param_name.lower() or 'content' in param_name.lower():
                         # For body/content, prefer summarizer or text processing steps
                         for step in reversed(current_steps):
                             if any(keyword in step['connector_name'] for keyword in ['summariz', 'text', 'process']):
+                                value = f"{{{{{step['connector_name']}.result}}}}"
+                                break
+                        if not value:
+                            value = f"{{{{{current_steps[-1]['connector_name']}.result}}}}"
+                    elif param_name.lower() == 'text' and 'summariz' in connector_name.lower():
+                        # Dynamic handling for any summarizer connector - it needs actual text content
+                        # Look for code nodes that might have processed text content
+                        for step in reversed(current_steps):
+                            if step['connector_name'] == 'code':
+                                # Try common text field names from code processing
+                                possible_fields = ['combinedText', 'processedText', 'content', 'text', 'result']
+                                # Use the most likely field for text content
+                                value = f"{{{{{step['connector_name']}.combinedText}}}}"
+                                break
+                            elif any(keyword in step['connector_name'] for keyword in ['summariz', 'text', 'process']):
                                 value = f"{{{{{step['connector_name']}.result}}}}"
                                 break
                         if not value:
@@ -1801,21 +2586,37 @@ class TrueReActAgent:
     
     async def _configure_task_parameters(self, tool_name: str, reasoning_context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Configure parameters for a specific task using AI reasoning with full context.
+        Configure parameters for a specific task using AI reasoning with enhanced metadata.
         """
         try:
             task = reasoning_context.get('task', {})
             previous_steps = reasoning_context.get('previous_steps', [])
             original_request = reasoning_context.get('original_request', '')
             
-            # Get tool schema from registry
+            # Get enhanced tool metadata from enhanced tool registry
             tool_schema = {}
-            if hasattr(self, 'tool_registry') and self.tool_registry:
+            parameter_hints = {}
+            example_params = {}
+            
+            try:
+                # Get AI-generated parameter suggestions from enhanced registry
+                example_params = await self.tool_registry.generate_parameter_suggestions(tool_name, original_request, reasoning_context)
+                
+                # Get tool metadata including schema and hints
+                tool_metadata = await self.tool_registry.get_tool_metadata_by_name(tool_name)
+                if tool_metadata:
+                    tool_schema = tool_metadata.get('parameter_schema', {})
+                    parameter_hints = tool_metadata.get('ai_parameter_hints', tool_metadata.get('parameter_hints', {}))
+                
+            except Exception as e:
+                logger.warning(f"Failed to get enhanced metadata for {tool_name}: {str(e)}")
+                
+                # Fallback to basic tool registry metadata
                 if hasattr(self.tool_registry, 'tool_metadata'):
                     tool_metadata = self.tool_registry.tool_metadata.get(tool_name, {})
                     tool_schema = tool_metadata.get('parameter_schema', {})
             
-            # Create comprehensive parameter configuration prompt
+            # Create enhanced parameter configuration prompt with AI suggestions
             parameter_prompt = f"""
             TASK CONTEXT:
             - Task: {task.get('description', '')}
@@ -1829,11 +2630,19 @@ class TrueReActAgent:
             TOOL SCHEMA:
             {json.dumps(tool_schema, indent=2) if tool_schema else "No schema available"}
             
+            AI-GENERATED PARAMETER SUGGESTIONS:
+            {json.dumps(example_params, indent=2) if example_params else "No suggestions available"}
+            
+            PARAMETER HINTS:
+            {chr(10).join([f"- {param}: {hint}" for param, hint in parameter_hints.items()]) if parameter_hints else "No hints available"}
+            
             TASK: Configure the parameters for {tool_name} to accomplish: {task.get('description', '')}
             
             INSTRUCTIONS:
-            1. Analyze what this task needs to accomplish
-            2. Consider data from previous steps (use {{step_name.result}} format for references)
+            1. Start with the AI-generated parameter suggestions as a base
+            2. Analyze what this task needs to accomplish
+            3. Consider data from previous steps (use {{step_name.result}} format for references)
+            4. Use the parameter hints to understand what each parameter does
             3. Fill in all required parameters based on the original request
             4. Use appropriate values that align with the user's intent
             

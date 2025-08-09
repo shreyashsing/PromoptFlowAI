@@ -14,6 +14,7 @@ from .perplexity_connector import PerplexityConnector
 from .notion_connector import NotionConnector
 from .youtube_connector import YouTubeConnector
 from .airtable_connector import AirtableConnector
+from .code_connector import CodeConnector
 
 __all__ = [
     'HttpConnector',
@@ -24,5 +25,6 @@ __all__ = [
     'PerplexityConnector',
     'NotionConnector',
     'YouTubeConnector',
-    'AirtableConnector'
+    'AirtableConnector',
+    'CodeConnector'
 ]

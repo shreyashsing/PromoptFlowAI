@@ -14,7 +14,7 @@ from app.core.database import get_database, init_database
 from app.core.config import settings
 from app.services.rag import RAGRetriever, init_rag_system
 from app.services.conversational_agent import ConversationalAgent, init_conversational_agent
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
 from app.connectors.core.register import register_core_connectors
 from app.connectors.registry import ConnectorRegistry
 from app.core.logging_config import init_logging
@@ -69,7 +69,7 @@ class EndToEndIntegrationTest:
         
         # Initialize workflow orchestrator
         logger.info("Initializing workflow orchestrator...")
-        self.workflow_orchestrator = WorkflowOrchestrator()
+        self.workflow_orchestrator = UnifiedWorkflowOrchestrator()
         
         # Get the global connector registry that was populated during registration
         from app.connectors.registry import connector_registry

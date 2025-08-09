@@ -18,7 +18,7 @@ from app.models.base import WorkflowPlan, WorkflowNode, WorkflowEdge, Trigger, W
 from app.models.react_agent import ChatRequestAPI, ChatResponseAPI
 from app.services.react_agent_service import get_react_agent_service, ReactAgentService
 from app.services.integrated_workflow_agent import get_integrated_workflow_agent
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
 from app.services.tool_registry import ToolRegistry
 from app.models.execution import ExecutionResult
 from app.core.error_handler import handle_api_error
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/workflows-react", tags=["workflows-react"])
 
 # Global instances
-orchestrator = WorkflowOrchestrator()
+orchestrator = UnifiedWorkflowOrchestrator()
 tool_registry = ToolRegistry()
 
 

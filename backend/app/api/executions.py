@@ -14,13 +14,13 @@ from datetime import datetime
 
 from app.core.auth import get_current_user
 from app.models.execution import ExecutionResult, ExecutionStatus, NodeExecutionResult
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
 
 
 router = APIRouter(prefix="/executions", tags=["executions"])
 
 # Global orchestrator instance
-orchestrator = WorkflowOrchestrator()
+orchestrator = UnifiedWorkflowOrchestrator()
 
 
 class ExecutionStatusResponse(BaseModel):

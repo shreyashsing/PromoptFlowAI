@@ -32,6 +32,77 @@ class GmailConnector(BaseConnector):
     def _get_category(self) -> str:
         return "communication"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Gmail connector."""
+        return {
+            "action": "send",
+            "to": "user@example.com",
+            "subject": "Test Email",
+            "body": "This is a test email sent via Gmail connector."
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Gmail-specific example prompts."""
+        return [
+            "Send an email to john@example.com about the meeting tomorrow",
+            "Find all unread emails from my manager",
+            "Search for emails with 'invoice' in the subject",
+            "Mark all emails from newsletter@company.com as read",
+            "Get the latest 20 emails from my inbox",
+            "Reply to the email about project updates",
+            "Create a draft email for the team announcement"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Gmail-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Gmail-specific parameter inference
+        if "send" in prompt_lower or "email" in prompt_lower:
+            suggestions["action"] = "send"
+            
+            # Extract email addresses
+            import re
+            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+            emails = re.findall(email_pattern, user_prompt)
+            if emails:
+                suggestions["to"] = emails[0] if len(emails) == 1 else ",".join(emails)
+        
+        elif "search" in prompt_lower or "find" in prompt_lower:
+            suggestions["action"] = "search"
+            
+            # Convert natural language to Gmail query
+            if "unread" in prompt_lower:
+                suggestions["query"] = "is:unread"
+            elif "from" in prompt_lower:
+                # Extract sender info
+                from_match = re.search(r'from\s+([^\s]+)', prompt_lower)
+                if from_match:
+                    suggestions["query"] = f"from:{from_match.group(1)}"
+            elif "subject" in prompt_lower:
+                # Extract subject keywords
+                subject_match = re.search(r'subject[:\s]+["\']?([^"\']+)["\']?', prompt_lower)
+                if subject_match:
+                    suggestions["query"] = f"subject:{subject_match.group(1)}"
+        
+        elif "list" in prompt_lower or "get" in prompt_lower:
+            suggestions["action"] = "list"
+            
+            # Extract number of results
+            import re
+            number_match = re.search(r'(\d+)', user_prompt)
+            if number_match:
+                suggestions["max_results"] = int(number_match.group(1))
+        
+        elif "mark" in prompt_lower and "read" in prompt_lower:
+            suggestions["action"] = "mark_as_read"
+        
+        elif "delete" in prompt_lower:
+            suggestions["action"] = "delete"
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

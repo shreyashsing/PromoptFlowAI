@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import get_current_user
 from app.core.database import get_supabase_client
 from app.models.base import WorkflowPlan, WorkflowNode, WorkflowEdge, Trigger, WorkflowStatus
-from app.services.workflow_orchestrator import WorkflowOrchestrator
+from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
 from app.models.execution import ExecutionResult
 from app.core.error_handler import handle_api_error
 from app.core.error_utils import ErrorBoundary, create_error_context, handle_database_errors
@@ -28,10 +28,56 @@ from app.core.exceptions import WorkflowException, ValidationException
 
 logger = logging.getLogger(__name__)
 
+
+def _merge_workflow_nodes(existing_nodes: List[Dict[str, Any]], updated_nodes: List[WorkflowNode]) -> List[Dict[str, Any]]:
+    """
+    Smart merge of workflow nodes that preserves existing parameters when updating.
+    
+    This prevents the issue where updating one parameter resets all other parameters.
+    
+    Args:
+        existing_nodes: Current nodes from database
+        updated_nodes: New nodes from update request
+        
+    Returns:
+        Merged nodes with preserved parameters
+    """
+    # Create lookup for existing nodes by ID
+    existing_by_id = {node.get("id"): node for node in existing_nodes}
+    
+    merged_nodes = []
+    
+    for updated_node in updated_nodes:
+        updated_dict = updated_node.dict()
+        node_id = updated_dict.get("id")
+        
+        if node_id in existing_by_id:
+            # Node exists - merge parameters intelligently
+            existing_node = existing_by_id[node_id].copy()
+            
+            # Merge parameters: start with existing, update with new values
+            existing_params = existing_node.get("parameters", {})
+            updated_params = updated_dict.get("parameters", {})
+            
+            # Smart merge: preserve existing parameters, update with new ones
+            merged_params = existing_params.copy()
+            merged_params.update(updated_params)
+            
+            # Update the node with merged parameters
+            existing_node.update(updated_dict)
+            existing_node["parameters"] = merged_params
+            
+            merged_nodes.append(existing_node)
+        else:
+            # New node - use as is
+            merged_nodes.append(updated_dict)
+    
+    return merged_nodes
+
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 # Global orchestrator instance
-orchestrator = WorkflowOrchestrator()
+orchestrator = UnifiedWorkflowOrchestrator()
 
 
 # Request/Response models
@@ -327,7 +373,8 @@ async def update_workflow(
         if request.description is not None:
             update_data["description"] = request.description
         if request.nodes is not None:
-            update_data["nodes"] = [node.dict() for node in request.nodes]
+            # Smart merge: preserve existing node parameters when updating
+            update_data["nodes"] = _merge_workflow_nodes(existing_data.get("nodes", []), request.nodes)
         if request.edges is not None:
             update_data["edges"] = [edge.dict() for edge in request.edges]
         if request.triggers is not None:

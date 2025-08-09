@@ -27,6 +27,88 @@ class GoogleDriveConnector(BaseConnector):
     def _get_category(self) -> str:
         return "data_sources"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Google Drive connector."""
+        return {
+            "operation": "list",
+            "max_results": 10,
+            "query": "name contains 'project'"
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Google Drive-specific example prompts."""
+        return [
+            "List all files in my Google Drive",
+            "Search for documents containing 'project report'",
+            "Upload a file to Google Drive",
+            "Create a new folder called 'Meeting Notes'",
+            "Download a file from Google Drive",
+            "Share a document with team members",
+            "Get file metadata and permissions"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Google Drive-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Google Drive-specific parameter inference
+        if "list" in prompt_lower or "show" in prompt_lower:
+            suggestions["operation"] = "list"
+            
+            # Extract number of results
+            import re
+            number_match = re.search(r'(\d+)', user_prompt)
+            if number_match:
+                suggestions["max_results"] = int(number_match.group(1))
+        
+        elif "search" in prompt_lower or "find" in prompt_lower:
+            suggestions["operation"] = "search"
+            
+            # Extract search terms
+            search_patterns = [
+                r'search.*?for\s+["\']([^"\']+)["\']',
+                r'find.*?["\']([^"\']+)["\']',
+                r'containing\s+["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in search_patterns:
+                match = re.search(pattern, prompt_lower)
+                if match:
+                    search_term = match.group(1)
+                    suggestions["query"] = f"name contains '{search_term}'"
+                    break
+        
+        elif "upload" in prompt_lower:
+            suggestions["operation"] = "upload"
+        
+        elif "download" in prompt_lower:
+            suggestions["operation"] = "download"
+        
+        elif "create" in prompt_lower and "folder" in prompt_lower:
+            suggestions["operation"] = "create_folder"
+            
+            # Extract folder name
+            folder_patterns = [
+                r'folder.*?called\s+["\']([^"\']+)["\']',
+                r'folder.*?named\s+["\']([^"\']+)["\']',
+                r'create.*?["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in folder_patterns:
+                match = re.search(pattern, prompt_lower)
+                if match:
+                    suggestions["name"] = match.group(1)
+                    break
+        
+        elif "share" in prompt_lower:
+            suggestions["operation"] = "share"
+        
+        elif "delete" in prompt_lower:
+            suggestions["operation"] = "delete"
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

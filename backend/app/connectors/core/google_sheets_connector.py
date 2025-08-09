@@ -25,6 +25,86 @@ class GoogleSheetsConnector(BaseConnector):
     def _get_category(self) -> str:
         return "data_sources"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Google Sheets connector."""
+        return {
+            "operation": "read",
+            "spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+            "range": "Sheet1!A1:D10"
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Google Sheets-specific example prompts."""
+        return [
+            "Read data from a Google Sheets spreadsheet",
+            "Update cells in my budget spreadsheet",
+            "Create a new spreadsheet for project tracking",
+            "Add a new row to the customer database",
+            "Get all data from the first sheet",
+            "Clear data from a specific range",
+            "Format cells in the spreadsheet"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Google Sheets-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Google Sheets-specific parameter inference
+        if "read" in prompt_lower or "get" in prompt_lower:
+            suggestions["operation"] = "read"
+            
+            # Default range if not specified
+            if "range" not in suggestions:
+                suggestions["range"] = "Sheet1!A1:Z100"
+        
+        elif "write" in prompt_lower or "update" in prompt_lower:
+            suggestions["operation"] = "write"
+        
+        elif "append" in prompt_lower or "add" in prompt_lower:
+            suggestions["operation"] = "append"
+        
+        elif "create" in prompt_lower:
+            suggestions["operation"] = "create"
+            
+            # Extract spreadsheet title
+            import re
+            title_patterns = [
+                r'create.*?spreadsheet.*?["\']([^"\']+)["\']',
+                r'spreadsheet.*?called\s+["\']([^"\']+)["\']',
+                r'new.*?["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in title_patterns:
+                match = re.search(pattern, prompt_lower)
+                if match:
+                    suggestions["title"] = match.group(1)
+                    break
+        
+        elif "clear" in prompt_lower:
+            suggestions["operation"] = "clear"
+        
+        elif "delete" in prompt_lower:
+            suggestions["operation"] = "delete"
+        
+        # Extract range if mentioned
+        range_patterns = [
+            r'range\s+([A-Z]+\d+:[A-Z]+\d+)',
+            r'cells?\s+([A-Z]+\d+:[A-Z]+\d+)',
+            r'from\s+([A-Z]+\d+)\s+to\s+([A-Z]+\d+)'
+        ]
+        
+        for pattern in range_patterns:
+            match = re.search(pattern, user_prompt.upper())
+            if match:
+                if len(match.groups()) == 1:
+                    suggestions["range"] = f"Sheet1!{match.group(1)}"
+                else:
+                    suggestions["range"] = f"Sheet1!{match.group(1)}:{match.group(2)}"
+                break
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

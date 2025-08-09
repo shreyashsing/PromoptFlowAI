@@ -20,6 +20,9 @@ from app.connectors.core.parallel_execution_connector import ParallelExecutionCo
 from app.connectors.core.google_drive_connector import GoogleDriveConnector
 from app.connectors.core.youtube_connector import YouTubeConnector
 
+from app.connectors.core.google_translate_connector import GoogleTranslateConnector
+from app.connectors.core.code_connector import CodeConnector
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +44,9 @@ def register_core_connectors():
         AirtableConnector,
         TextSummarizerConnector,
         YouTubeConnector,
-        ParallelExecutionConnector
+        ParallelExecutionConnector,
+        CodeConnector,
+        GoogleTranslateConnector
     ]
     
     registered_count = 0
@@ -126,6 +131,18 @@ def get_core_connector_info():
             "description": "Manage Airtable bases, tables, and records with comprehensive database operations",
             "category": "data_sources",
             "auth_types": ["api_key"]
+        },
+        "google_translate": {
+            "name": "Google Translate Connector",
+            "description": "Translate text between languages using Google Cloud Translation API with OAuth authentication",
+            "category": "utility",
+            "auth_types": ["oauth"]
+        },
+        "code": {
+            "name": "Code Connector",
+            "description": "Execute custom JavaScript or Python code with sandboxing and validation",
+            "category": "development",
+            "auth_types": ["none"]
         }
     }
 

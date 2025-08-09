@@ -28,6 +28,83 @@ class AirtableConnector(BaseConnector):
     def _get_category(self) -> str:
         return "data_sources"
     
+    def get_example_params(self) -> Dict[str, Any]:
+        """Get example parameters for Airtable connector."""
+        return {
+            "operation": "list",
+            "base_id": "appXXXXXXXXXXXXXX",
+            "table_name": "Tasks",
+            "max_records": 10
+        }
+    
+    def get_example_prompts(self) -> List[str]:
+        """Get Airtable-specific example prompts."""
+        return [
+            "Get all records from my Airtable base",
+            "Create a new record in the Tasks table",
+            "Update a record in my customer database",
+            "Search for records with status 'Complete'",
+            "Delete a record from the inventory table",
+            "List all tables in my Airtable base",
+            "Get records filtered by specific criteria"
+        ]
+    
+    def generate_parameter_suggestions(self, user_prompt: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate Airtable-specific parameter suggestions."""
+        suggestions = super().generate_parameter_suggestions(user_prompt, context)
+        prompt_lower = user_prompt.lower()
+        
+        # Airtable-specific parameter inference
+        if "list" in prompt_lower or "get" in prompt_lower:
+            suggestions["operation"] = "list"
+            
+            # Extract number of records
+            import re
+            number_match = re.search(r'(\d+)', user_prompt)
+            if number_match:
+                suggestions["max_records"] = int(number_match.group(1))
+        
+        elif "create" in prompt_lower or "add" in prompt_lower:
+            suggestions["operation"] = "create"
+        
+        elif "update" in prompt_lower or "modify" in prompt_lower:
+            suggestions["operation"] = "update"
+        
+        elif "delete" in prompt_lower or "remove" in prompt_lower:
+            suggestions["operation"] = "delete"
+        
+        elif "search" in prompt_lower or "find" in prompt_lower:
+            suggestions["operation"] = "list"
+            
+            # Extract filter criteria
+            filter_patterns = [
+                r'with\s+status\s+["\']([^"\']+)["\']',
+                r'where\s+([^,\.]+)',
+                r'status\s+["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in filter_patterns:
+                match = re.search(pattern, prompt_lower)
+                if match:
+                    filter_value = match.group(1)
+                    suggestions["filter_by_formula"] = f"{{Status}} = '{filter_value}'"
+                    break
+        
+        # Extract table name
+        table_patterns = [
+            r'table\s+["\']([^"\']+)["\']',
+            r'from\s+["\']([^"\']+)["\']',
+            r'in\s+the\s+([A-Za-z]+)\s+table'
+        ]
+        
+        for pattern in table_patterns:
+            match = re.search(pattern, prompt_lower)
+            if match:
+                suggestions["table_name"] = match.group(1)
+                break
+        
+        return suggestions
+    
     def _define_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",

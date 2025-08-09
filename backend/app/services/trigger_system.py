@@ -507,7 +507,7 @@ class TriggerSystem:
         trigger_data: Dict[str, Any]
     ) -> ExecutionResult:
         """Execute a workflow triggered by a trigger."""
-        from app.services.workflow_orchestrator import WorkflowOrchestrator
+        from app.services.unified_workflow_orchestrator import UnifiedWorkflowOrchestrator
         
         try:
             # Get workflow
@@ -529,7 +529,7 @@ class TriggerSystem:
             self.trigger_executions[trigger_execution.execution_id] = trigger_execution
             
             # Execute workflow
-            orchestrator = WorkflowOrchestrator()
+            orchestrator = UnifiedWorkflowOrchestrator()
             execution_result = await orchestrator.execute_workflow(workflow)
             
             # Update trigger execution record
