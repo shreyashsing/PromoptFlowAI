@@ -25,8 +25,10 @@ import { NotionConnectorModal } from './connectors/notion';
 import { YouTubeConnectorModal } from './connectors/youtube';
 import { CodeConnectorModal } from './connectors/code';
 import { GmailConnectorModal } from './connectors/gmail';
-
+import { GoogleSheetsConnectorModal } from './connectors/google_sheets';
+import { PerplexityConnectorModal } from './connectors/perplexity';
 import { GoogleTranslateConnectorModal } from './connectors/google_translate/GoogleTranslateConnectorModal';
+import { AirtableConnectorModal } from './connectors/airtable/AirtableConnectorModal';
 
 interface ConnectorConfig {
   name: string;
@@ -47,6 +49,9 @@ interface ConnectorConfigModalProps {
   onClose: () => void;
   connectorName: string | null;
   onSave: (config: ConnectorConfig) => Promise<void>;
+  initialConfig?: any; // Saved configuration to load
+  initialData?: any; // AI-generated parameters
+  mode?: 'create' | 'edit';
 }
 
 const CONNECTOR_TEMPLATES: { [key: string]: Partial<ConnectorConfig> } = {
@@ -166,6 +171,23 @@ const CONNECTOR_TEMPLATES: { [key: string]: Partial<ConnectorConfig> } = {
       timeout: 30,
       safe_mode: true
     }
+  },
+  airtable: {
+    display_name: 'Airtable',
+    description: 'Manage Airtable bases, tables, and records with comprehensive database operations',
+    auth_type: 'api_key',
+    auth_config: {
+      api_token: ''
+    },
+    settings: {
+      resource: 'record',
+      operation: 'get',
+      base_id: '',
+      table_id: '',
+      max_records: 100,
+      cell_format: 'json',
+      typecast: false
+    }
   }
 };
 
@@ -173,7 +195,10 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
   isOpen,
   onClose,
   connectorName,
-  onSave
+  onSave,
+  initialConfig,
+  initialData,
+  mode = 'create'
 }) => {
   // All connectors should now be properly configurable with the Code connector
 
@@ -184,6 +209,9 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
       />
     );
   }
@@ -194,6 +222,9 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
       />
     );
   }
@@ -204,6 +235,9 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
       />
     );
   }
@@ -214,6 +248,9 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
       />
     );
   }
@@ -224,6 +261,33 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+      />
+    );
+  }
+
+  if (connectorName === 'google_sheets') {
+    return (
+      <GoogleSheetsConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
+      />
+    );
+  }
+
+  if (connectorName === 'perplexity' || connectorName === 'perplexity_search') {
+    return (
+      <PerplexityConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
+        mode={mode}
       />
     );
   }
@@ -234,6 +298,19 @@ export const ConnectorConfigModal: React.FC<ConnectorConfigModalProps> = ({
         isOpen={isOpen}
         onClose={onClose}
         onSave={onSave}
+        initialConfig={initialConfig}
+      />
+    );
+  }
+
+  if (connectorName === 'airtable') {
+    return (
+      <AirtableConnectorModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onSave={onSave}
+        initialConfig={initialConfig}
+        initialData={initialData}
       />
     );
   }

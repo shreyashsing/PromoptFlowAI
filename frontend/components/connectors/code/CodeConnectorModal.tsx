@@ -273,10 +273,10 @@ export function CodeConnectorModal({
         </DialogHeader>
 
         <Tabs defaultValue="editor" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="editor">Code Editor</TabsTrigger>
             <TabsTrigger value="examples">Examples</TabsTrigger>
-            <TabsTrigger value="test">Test & Preview</TabsTrigger>
+
           </TabsList>
 
           <TabsContent value="editor" className="space-y-6">

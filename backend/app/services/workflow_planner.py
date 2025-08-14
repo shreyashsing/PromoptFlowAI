@@ -372,7 +372,19 @@ class WorkflowPlannerAgent:
         workflow_sequence = analysis.get('workflow_sequence', [])
         
         if not workflow_sequence:
-            # Fallback: create single step with best available connector
+            # Check if the analysis explicitly indicates no workflow is needed
+            estimated_steps = analysis.get('estimated_steps', 0)
+            primary_goal = analysis.get('primary_goal', '').lower()
+            
+            # Don't create fallback steps for greetings or when analysis shows 0 steps
+            if (estimated_steps == 0 or 
+                'greeting' in primary_goal or 
+                'no actionable workflow' in primary_goal or
+                'no workflow' in primary_goal):
+                logger.info("🚫 Analysis indicates no workflow needed - returning empty steps")
+                return steps
+            
+            # Only create fallback for unclear but potentially actionable requests
             connector_names = self.connector_registry.list_connectors()
             if connector_names:
                 step = PlanStep(

@@ -80,6 +80,11 @@ export default function OAuthCallbackPage() {
         setStatus('success');
         setMessage(`OAuth authentication successful for ${connectorName}! You can close this window.`);
 
+        // Notify parent window of success
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_SUCCESS', connectorName }, window.location.origin);
+        }
+
         // Clean up stored OAuth data
         localStorage.removeItem('oauth_state');
         localStorage.removeItem('oauth_connector');
@@ -95,6 +100,11 @@ export default function OAuthCallbackPage() {
         console.error('OAuth callback error:', error);
         setStatus('error');
         setMessage(`OAuth callback failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        
+        // Notify parent window of error
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_ERROR', error: error instanceof Error ? error.message : 'Unknown error' }, window.location.origin);
+        }
       }
     };
 

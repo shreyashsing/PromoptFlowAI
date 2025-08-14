@@ -93,7 +93,8 @@ async def build_workflow_with_react(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Build workflow using ReAct methodology with integrated workflow agent.
+    Build workflow using ReAct methodology with intelligent conversation handling.
+    Now supports conversational interactions, not just workflow creation.
     """
     start_time = time.time()
     
@@ -245,7 +246,7 @@ async def build_workflow_with_true_react(
                 ui_updates=ui_updates
             )
         
-        # Process with True ReAct Agent
+        # Process with True ReAct Agent (now includes intelligent conversation handling)
         result = await react_agent.process_user_request(request.query, current_user['user_id'], session_context)
         
         # Get UI updates from session
@@ -255,7 +256,7 @@ async def build_workflow_with_true_react(
         duration = time.time() - start_time
         record_request_time(duration)
         
-        if result["success"]:
+        if result.get("success", False):
             # Handle different phases of the conversational planning system
             phase = result.get("phase", "completed")
             
@@ -285,6 +286,20 @@ async def build_workflow_with_true_react(
                     awaiting_approval=result.get("awaiting_approval", True)
                 )
                 
+            elif phase == "conversational":
+                # Conversational response - return the message directly
+                logger.info(f"True ReAct conversational response for session {session_id} in {duration:.3f}s")
+                
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message=result.get("message", "I'm here to help!"),
+                    workflow=None,
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase
+                )
+                
             elif phase == "completed":
                 # Execution completed - return final workflow
                 logger.info(f"True ReAct workflow completed for session {session_id} in {duration:.3f}s")
@@ -307,7 +322,30 @@ async def build_workflow_with_true_react(
                     ui_updates=ui_updates,
                     phase=phase
                 )
-            
+            elif phase == "modified":
+                # Workflow was modified post-execution - persist the latest workflow in session
+                logger.info(f"True ReAct phase 'modified' completed for session {session_id} in {duration:.3f}s")
+
+                # Persist modified workflow so subsequent modification requests maintain context
+                await store_session_context(session_id, {
+                    "executed_workflow": result.get("workflow"),
+                    "original_plan": result.get("plan", {}),
+                    "user_id": current_user['user_id'],
+                    "updated_at": time.time(),
+                    "awaiting_approval": False
+                })
+
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message=result.get("message", "Workflow modified successfully."),
+                    workflow=result.get("workflow"),
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase=phase,
+                    plan=result.get("plan")
+                )
+
             else:
                 # Unknown phase, return what we have
                 logger.info(f"True ReAct phase '{phase}' completed for session {session_id} in {duration:.3f}s")
@@ -331,9 +369,20 @@ async def build_workflow_with_true_react(
                 logger.info(f"Approval without plan context detected: {request.query}")
                 message = result.get("message", "Please start by describing what workflow you'd like me to create.")
             elif is_conversational:
-                # For conversational/greeting messages, return a helpful response
+                # For conversational/greeting messages, return the intelligent response
                 logger.info(f"Conversational request detected: {request.query}")
                 message = result.get("message", "This appears to be a conversational message. How can I help you create a workflow?")
+                
+                # For conversational responses, we actually want to return success=True
+                # since this is the intended behavior, not an error
+                return TrueReActResponse(
+                    success=True,
+                    session_id=session_id,
+                    message=message,
+                    reasoning_trace=result.get("reasoning_trace", []),
+                    ui_updates=ui_updates,
+                    phase="conversational"
+                )
             else:
                 # For actual errors
                 logger.error(f"True ReAct workflow failed: {error_type}")

@@ -55,74 +55,22 @@ class TrueReActAgent:
         await self.planner_agent.initialize(auth_context)
         logger.info("Enhanced planner agent integrated successfully")
     
-    async def determine_if_workflow_needed(self, request: str) -> bool:
+    async def analyze_user_intent(self, request: str, session_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Determine if the user request actually needs a workflow or is just conversational.
+        Analyze user intent using the intelligent conversation handler.
         """
-        request_lower = request.lower().strip()
+        from app.services.intelligent_conversation_handler import get_conversation_handler
         
-        # Common greetings and conversational patterns
-        greetings = [
-            "hi", "hello", "hey", "hii", "hiii", "hiiii",
-            "good morning", "good afternoon", "good evening",
-            "what's up", "whats up", "how are you", "sup"
-        ]
+        conversation_handler = await get_conversation_handler()
+        intent_analysis = await conversation_handler.analyze_intent(request, session_context)
         
-        # Simple conversational responses
-        simple_responses = [
-            "thanks", "thank you", "ok", "okay", "yes", "no",
-            "cool", "nice", "great", "awesome", "lol", "haha"
-        ]
-        
-        # Check if it's just a greeting
-        if request_lower in greetings:
-            return False
-        
-        # Check if it's a simple response
-        if request_lower in simple_responses:
-            return False
-        
-        # Check if it's very short and doesn't contain action words
-        action_words = [
-            "send", "email", "search", "find", "create", "make", "build",
-            "get", "fetch", "download", "upload", "process", "analyze",
-            "summarize", "write", "generate", "automate", "schedule",
-            "connect", "integrate", "sync", "update", "delete", "add"
-        ]
-        
-        # If request is very short (< 3 words) and has no action words, likely conversational
-        words = request_lower.split()
-        if len(words) < 3 and not any(action in request_lower for action in action_words):
-            return False
-        
-        # If it contains action words, likely needs a workflow
-        if any(action in request_lower for action in action_words):
-            return True
-        
-        # If it's a single word and not an action word, probably conversational
-        if len(words) == 1 and request_lower not in action_words:
-            return False
-        
-        # If it mentions specific tools/services AND has enough context, likely needs a workflow
-        service_words = [
-            "gmail", "google", "sheets", "slack", "webhook",
-            "api", "database", "file", "document", "spreadsheet"
-        ]
-        
-        # Only consider service words if the request has more context (more than just the service name)
-        if any(service in request_lower for service in service_words) and len(words) > 1:
-            return True
-        
-        # Special case for "email" - only if it's part of a longer request
-        if "email" in request_lower and len(words) > 1:
-            return True
-        
-        # If we get here and it's still very short, probably conversational
-        if len(request_lower) < 10:
-            return False
-        
-        # Default to needing workflow for longer, more complex requests
-        return True
+        return {
+            "intent": intent_analysis.intent.value,
+            "confidence": intent_analysis.confidence,
+            "reasoning": intent_analysis.reasoning,
+            "extracted_info": intent_analysis.extracted_info,
+            "needs_workflow": intent_analysis.intent.value == "workflow_creation"
+        }
     
     async def process_user_request(self, request: str, user_id: str, session_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -160,45 +108,99 @@ class TrueReActAgent:
                     "is_conversational": True
                 }
             
-            # Step 2: Determine if this request actually needs a workflow
-            needs_workflow = await self.determine_if_workflow_needed(request)
+            # Step 2: Analyze user intent using intelligent conversation handler
+            intent_analysis = await self.analyze_user_intent(request, session_context)
             
-            if not needs_workflow:
-                logger.info("💬 Request is conversational/greeting - no workflow needed")
+            logger.info(f"🧠 Intent analysis: {intent_analysis['intent']} (confidence: {intent_analysis['confidence']})")
+            
+            # Handle different intents appropriately
+            if intent_analysis["intent"] in ["conversational", "greeting", "help_request", "workflow_question"]:
+                from app.services.intelligent_conversation_handler import get_conversation_handler, ConversationIntent
+                
+                conversation_handler = await get_conversation_handler()
+                intent_enum = ConversationIntent(intent_analysis["intent"])
+                
+                # Add extracted info to context for better response generation
+                enhanced_context = session_context.copy() if session_context else {}
+                enhanced_context["extracted_info"] = intent_analysis.get("extracted_info", {})
+                
+                response_message = await conversation_handler.generate_conversational_response(
+                    intent_enum, request, enhanced_context
+                )
+                
+                logger.info(f"💬 Conversational response generated for intent: {intent_analysis['intent']}")
+                return {
+                    "success": True,
+                    "phase": "conversational",
+                    "message": response_message,
+                    "reasoning_trace": [f"Intent: {intent_analysis['intent']} - {intent_analysis['reasoning']}"],
+                    "is_conversational": True,
+                    "intent_analysis": intent_analysis
+                }
+            
+            elif intent_analysis["intent"] == "approval_response":
+                logger.info("✅ User is responding to a plan approval request")
+                # This should be handled by the plan approval logic above
+                return {
+                    "success": False,
+                    "error": "no_plan_context",
+                    "message": "It looks like you're trying to approve a plan, but I don't have a current plan to approve. Please start by describing what workflow you'd like me to create.",
+                    "reasoning_trace": ["Approval response detected but no plan context available"],
+                    "is_conversational": True
+                }
+            
+            elif not intent_analysis["needs_workflow"]:
+                logger.info(f"💬 Request doesn't need workflow: {intent_analysis['intent']}")
                 return {
                     "success": False,
                     "error": "no_workflow_needed",
-                    "message": "This appears to be a greeting or conversational message. I can help you create workflows for specific tasks like sending emails, searching for information, or processing data. What would you like to automate?",
-                    "reasoning_trace": ["Request analyzed as conversational - no actionable workflow intent detected"],
-                    "is_conversational": True
+                    "message": "I understand you're looking for help. Could you please describe what kind of workflow or automation you'd like me to create for you?",
+                    "reasoning_trace": [f"Intent analysis: {intent_analysis['reasoning']}"],
+                    "is_conversational": True,
+                    "intent_analysis": intent_analysis
                 }
             
-            # Step 3: Create comprehensive plan using Tool Registry
-            logger.info("📋 Creating comprehensive workflow plan...")
-            workflow_plan = await self._create_comprehensive_plan(request, user_id)
+            # Step 3: Validate workflow requirements before creating plan
+            validation_result = await self._validate_workflow_requirements(request, intent_analysis)
             
-            if not workflow_plan.get("tasks"):
-                logger.info("🚫 No actionable workflow tasks identified")
+            if not validation_result["is_valid"]:
+                # Requirements are insufficient - ask for clarification
+                from app.services.intelligent_conversation_handler import get_conversation_handler, ConversationIntent
+                
+                conversation_handler = await get_conversation_handler()
+                clarification_response = await conversation_handler.generate_conversational_response(
+                    ConversationIntent.HELP_REQUEST, request, {
+                        "extracted_info": {
+                            "needs_clarification": True,
+                            "validation_issues": validation_result["issues"]
+                        }
+                    }
+                )
+                
+                logger.info("❓ Workflow requirements insufficient - requesting clarification")
                 return {
-                    "success": False,
-                    "error": "no_actionable_intent",
-                    "message": "I couldn't identify specific actions to automate from your request. Could you be more specific about what you'd like me to help you with?",
-                    "reasoning_trace": self.get_reasoning_trace(),
-                    "is_conversational": True
+                    "success": True,
+                    "phase": "conversational",
+                    "message": clarification_response,
+                    "reasoning_trace": [f"Validation failed: {validation_result['reason']}"],
+                    "is_conversational": True,
+                    "needs_clarification": True
                 }
             
-            # Step 4: Present plan to user for approval
-            await self._present_plan_to_user(workflow_plan, user_id)
+            # Step 4: Create comprehensive plan using Tool Registry
+            logger.info("📋 Creating comprehensive workflow plan...")
+            workflow_response = await self._create_comprehensive_plan(request, user_id)
             
-            # Return plan for user review
-            return {
-                "success": True,
-                "phase": "planning",
-                "plan": workflow_plan,
-                "message": self._format_plan_presentation(workflow_plan),
-                "reasoning_trace": self.get_reasoning_trace(),
-                "awaiting_approval": True
-            }
+            # _create_comprehensive_plan now returns a full response, so we can return it directly
+            if workflow_response.get("success"):
+                # Present plan to user for approval
+                plan = workflow_response.get("plan", {})
+                if plan:
+                    await self._present_plan_to_user(plan, user_id)
+                return workflow_response
+            else:
+                # If planning failed, return the error response
+                return workflow_response
             
         except Exception as e:
             logger.error(f"Error in ReAct agent processing: {e}")
@@ -253,6 +255,108 @@ class TrueReActAgent:
         
         self.current_reasoning = analysis.get("reasoning", "")
         return analysis
+    
+    async def _validate_workflow_requirements(self, request: str, intent_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate that we have sufficient information to create a meaningful workflow.
+        This prevents creating generic or incorrect workflows based on vague requests.
+        """
+        extracted_info = intent_analysis.get("extracted_info", {})
+        
+        # If we have high confidence from intent analysis, trust it
+        confidence = intent_analysis.get("confidence", 0.0)
+        if confidence >= 0.8:
+            # High confidence means the intent detection was clear, proceed with workflow creation
+            return {
+                "is_valid": True,
+                "reason": "High confidence intent detection indicates clear workflow request",
+                "confidence": confidence
+            }
+        
+        # Check specificity level (only if provided by AI analysis)
+        specificity = extracted_info.get("specificity_level", "medium")  # Default to medium instead of low
+        if specificity == "low" and confidence < 0.7:
+            return {
+                "is_valid": False,
+                "reason": "Request lacks specific details about what to automate",
+                "issues": ["vague_requirements"],
+                "suggestions": ["Ask what specific task to automate", "Ask which tools to use", "Ask about desired outcome"]
+            }
+        
+        # Check for mentioned tools or clear actions
+        mentioned_tools = extracted_info.get("mentioned_tools", [])
+        action_words = extracted_info.get("action_words", [])
+        
+        # Check if the request has clear actionable intent even without explicit tools
+        clear_action_patterns = [
+            r'\bmonitor\b.*\bwebsites?\b',
+            r'\btrack\b.*\bchanges?\b',
+            r'\bwatch\b.*\bfor\b',
+            r'\bnotify\b.*\bwhen\b',
+            r'\bsummarize\b.*\bemail',
+            r'\bsync\b.*\bdata\b',
+            r'\bbackup\b.*\bfiles?\b',
+            r'\bgenerate\b.*\breports?\b',
+            r'\bbuild\b.*\bautomation\b',
+            r'\bsend\b.*\b(message|email)\b.*@',
+            r'\bprocess\b.*\bdata\b',
+            r'\bdata\s+processing\b',
+            r'\bfind\b.*\bblog.*\band\s+send\b',
+            r'\bsearch\b.*\band\s+email\b',
+            r'\bget\b.*\band\s+send\s+to\b',
+            r'\bfind\b.*\btop\s+\d+\b.*\band\s+send\b',
+            r'\bsearch\b.*\btop\s+\d+\b.*\band\s+email\b'
+        ]
+        
+        has_clear_action = any(re.search(pattern, request.lower()) for pattern in clear_action_patterns)
+        
+        # Check for email addresses (strong indicator of clear intent)
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        has_email = bool(re.search(email_pattern, request))
+        
+        # If request has clear action pattern or email, it's likely valid
+        if has_clear_action or has_email:
+            return {
+                "is_valid": True,
+                "reason": "Request contains clear action patterns or specific destinations",
+                "has_clear_action": has_clear_action,
+                "has_email": has_email
+            }
+        
+        if not mentioned_tools and not action_words and not has_clear_action:
+            return {
+                "is_valid": False,
+                "reason": "No specific tools or actions mentioned",
+                "issues": ["no_tools_specified", "no_actions_specified"],
+                "suggestions": ["Ask which tools to connect", "Ask what actions to perform"]
+            }
+        
+        # Check clarity assessment (only if provided by AI analysis)
+        clarity = extracted_info.get("clarity_assessment", "clear")  # Default to clear instead of ambiguous
+        if clarity == "ambiguous" and confidence < 0.7:
+            return {
+                "is_valid": False,
+                "reason": "Request is ambiguous and could be misinterpreted",
+                "issues": ["ambiguous_request"],
+                "suggestions": ["Ask for clarification", "Provide examples", "Ask specific questions"]
+            }
+        
+        # Additional validation: Check for potentially sensitive operations
+        sensitive_keywords = ["delete", "remove", "destroy", "wipe", "clear", "reset"]
+        if any(keyword in request.lower() for keyword in sensitive_keywords):
+            return {
+                "is_valid": False,
+                "reason": "Request involves potentially sensitive operations that need explicit confirmation",
+                "issues": ["sensitive_operations"],
+                "suggestions": ["Ask for explicit confirmation", "Clarify scope of operation", "Confirm safety measures"]
+            }
+        
+        # Validation passed
+        return {
+            "is_valid": True,
+            "reason": "Request has sufficient detail and clarity",
+            "confidence": intent_analysis.get("confidence", 0.7)
+        }
     
     async def reason_next_step(self, initial_analysis: Dict[str, Any], current_steps: List[Dict[str, Any]], original_request: str) -> Optional[Dict[str, Any]]:
         """Reason about what the next step should be."""
@@ -680,13 +784,32 @@ class TrueReActAgent:
                     enhanced_plan = await self._convert_planner_sequence_to_plan(plan_sequence)
                     
                     logger.info(f"✅ Enhanced planner created {len(enhanced_plan.get('tasks', []))} optimized tasks")
-                    return enhanced_plan
+                    
+                    # Wrap the enhanced plan in the expected response format
+                    return {
+                        "success": True,
+                        "phase": "planning",
+                        "plan": enhanced_plan,
+                        "message": self._format_plan_presentation(enhanced_plan),
+                        "reasoning_trace": self.get_reasoning_trace(),
+                        "awaiting_approval": True
+                    }
                     
                 except Exception as e:
                     logger.warning(f"Enhanced planner failed, falling back to original method: {e}")
             
             # Fallback to original planning method if enhanced planner fails
-            return await self._create_original_comprehensive_plan(request, user_id)
+            fallback_plan = await self._create_original_comprehensive_plan(request, user_id)
+            
+            # Wrap the fallback plan in the expected response format
+            return {
+                "success": True,
+                "phase": "planning",
+                "plan": fallback_plan,
+                "message": self._format_plan_presentation(fallback_plan),
+                "reasoning_trace": self.get_reasoning_trace(),
+                "awaiting_approval": True
+            }
             
         except Exception as e:
             logger.error(f"Error in comprehensive planning: {e}")
@@ -695,7 +818,18 @@ class TrueReActAgent:
             if hasattr(self, 'tool_registry') and self.tool_registry:
                 tools = await self.tool_registry.get_available_tools()
                 available_tools = [tool.name for tool in tools]
-            return await self._create_fallback_plan(request, available_tools)
+            
+            final_fallback_plan = await self._create_fallback_plan(request, available_tools)
+            
+            # Wrap the final fallback plan in the expected response format
+            return {
+                "success": True,
+                "phase": "planning",
+                "plan": final_fallback_plan,
+                "message": self._format_plan_presentation(final_fallback_plan),
+                "reasoning_trace": self.get_reasoning_trace(),
+                "awaiting_approval": True
+            }
     
     async def _convert_planner_sequence_to_plan(self, plan_sequence: WorkflowPlanSequence) -> Dict[str, Any]:
         """
@@ -1105,7 +1239,38 @@ class TrueReActAgent:
             
             if not modification_analysis.get("is_modification"):
                 # This might be a new workflow request, not a modification
-                logger.info("🆕 Request doesn't seem to be a workflow modification, treating as new workflow")
+                logger.info("🆕 Request doesn't seem to be a workflow modification, checking if it needs a workflow")
+                
+                # Check if this is actually a conversational message using intelligent handler
+                intent_analysis = await self.analyze_user_intent(request, session_context)
+                
+                if not intent_analysis["needs_workflow"]:
+                    # Handle conversational requests using intelligent conversation handler
+                    from app.services.intelligent_conversation_handler import get_conversation_handler, ConversationIntent
+                    
+                    conversation_handler = await get_conversation_handler()
+                    intent_enum = ConversationIntent(intent_analysis["intent"])
+                    
+                    # Add extracted info to context for better response generation
+                    enhanced_context = session_context.copy() if session_context else {}
+                    enhanced_context["extracted_info"] = intent_analysis.get("extracted_info", {})
+                    
+                    response_message = await conversation_handler.generate_conversational_response(
+                        intent_enum, request, enhanced_context
+                    )
+                    
+                    logger.info(f"💬 Conversational response generated for intent: {intent_analysis['intent']}")
+                    return {
+                        "success": True,
+                        "phase": "conversational",
+                        "message": response_message,
+                        "reasoning_trace": [f"Intent: {intent_analysis['intent']} - {intent_analysis['reasoning']}"],
+                        "is_conversational": True,
+                        "intent_analysis": intent_analysis
+                    }
+                
+                # If it needs a workflow, create a comprehensive plan
+                logger.info("🔧 Creating new workflow plan")
                 return await self._create_comprehensive_plan(request, user_id)
             
             # Apply the modification automatically (no approval needed for post-execution changes)
@@ -1368,12 +1533,9 @@ class TrueReActAgent:
         try:
             logger.info(f"🚀 Executing enhanced plan with {len(plan.get('tasks', []))} tasks")
             
-            # Check if this is an enhanced plan that can use the advanced orchestrator
-            if plan.get('enhanced_planning') and plan.get('plan_id'):
-                return await self._execute_with_advanced_orchestrator(plan, user_id)
-            else:
-                # Fallback to original execution method
-                return await self._execute_approved_plan_original(plan, user_id)
+            # For now, use the original execution method which is working well
+            # TODO: Fix advanced orchestrator signature mismatch
+            return await self._execute_approved_plan_original(plan, user_id)
                 
         except Exception as e:
             logger.error(f"Error executing enhanced plan: {e}")
@@ -2968,6 +3130,18 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
                         logger.info(f"✅ Applied change: {result['change_description']}")
                     else:
                         logger.warning(f"⚠️ Failed to apply change: {result.get('error', 'Unknown error')}")
+                elif change["type"] == "task_addition":
+                    # Handle task addition
+                    result = await self._add_task_to_workflow(
+                        modified_workflow, 
+                        change, 
+                        user_id
+                    )
+                    if result["success"]:
+                        changes_applied.append(result["change_description"])
+                        logger.info(f"✅ Applied change: {result['change_description']}")
+                    else:
+                        logger.warning(f"⚠️ Failed to apply change: {result.get('error', 'Unknown error')}")
                 else:
                     logger.warning(f"⚠️ Unknown change type: {change.get('type', 'unknown')}")
             
@@ -3104,7 +3278,7 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             
             for step in steps:
                 if (step.get("connector_name") == connector_name and 
-                    (not task_number or step.get("step_number") == task_number)):
+                    (not task_number or step.get("task_number") == task_number or step.get("step_number") == task_number)):
                     target_step = step
                     break
             
@@ -3338,6 +3512,168 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             logger.error(f"❌ Error finding replacement connector: {e}")
             return None
     
+    async def _add_task_to_workflow(self, workflow: Dict[str, Any], change: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+        """
+        Add a new task to the workflow.
+        """
+        try:
+            connector_name = change.get("new_connector")
+            task_number = change.get("task_number", 1)
+            reason = change.get("reason", "User requested task addition")
+            
+            if not connector_name:
+                return {
+                    "success": False,
+                    "error": "No connector specified for task addition"
+                }
+            
+            # Get connector info from tool registry
+            connector_info = None
+            
+            if hasattr(self, 'tool_registry') and self.tool_registry:
+                tool_metadata = await self.tool_registry.get_tool_metadata_by_name(connector_name)
+                if tool_metadata:
+                    connector_info = tool_metadata
+            
+            if not connector_info:
+                return {
+                    "success": False,
+                    "error": f"Connector {connector_name} not found in tool registry"
+                }
+            
+            # Generate parameters for the new task using AI/pattern-based extraction first,
+            # leveraging the user's modification reason text for better accuracy.
+            try:
+                parameters = {}
+
+                # Prefer intelligent configuration using the connector schema and the reason text
+                try:
+                    current_steps = workflow.get("steps", [])
+                    parameters = await self._configure_connector_parameters(
+                        connector_info,
+                        {"user_request": reason},
+                        current_steps,
+                    )
+                except Exception as _cfg_err:
+                    logger.warning(
+                        f"⚠️ Intelligent parameter configuration failed for {connector_name}: {_cfg_err}"
+                    )
+                    parameters = {}
+
+                # If intelligent configuration produced nothing, fall back to the planner-based generation
+                if not parameters:
+                    if hasattr(self, 'workflow_planner') and self.workflow_planner:
+                        # Create a simple task description for parameter generation
+                        task_description = f"Add {connector_name.replace('_', ' ')} task: {reason}"
+
+                        # Generate parameters using the workflow planner's AI capabilities
+                        parameters = await self._generate_task_parameters(
+                            connector_name, task_description, workflow
+                        )
+                    else:
+                        parameters = self._get_default_parameters(connector_name)
+
+                # As a final guard, if key intent parameters like 'query' are still missing for
+                # search-type connectors, seed them from the reason text.
+                if connector_name == "perplexity_search" and (
+                    "query" not in parameters or not parameters.get("query")
+                ):
+                    parameters["query"] = reason
+
+            except Exception as e:
+                logger.warning(
+                    f"⚠️ Could not generate parameters for {connector_name}, using defaults: {e}"
+                )
+                parameters = self._get_default_parameters(connector_name)
+            
+            # Create the new step
+            new_step = {
+                "task_number": task_number,
+                "connector_name": connector_name,
+                "parameters": parameters,
+                "purpose": reason,
+                "reasoning": f"Added {connector_name} as requested by user"
+            }
+            
+            # Insert the step at the specified position
+            steps = workflow.get("steps", [])
+            
+            # Adjust task numbers for existing steps
+            for step in steps:
+                if step.get("task_number", 0) >= task_number:
+                    step["task_number"] = step.get("task_number", 0) + 1
+            
+            # Insert the new step
+            if task_number <= 1:
+                steps.insert(0, new_step)
+            elif task_number > len(steps):
+                steps.append(new_step)
+            else:
+                steps.insert(task_number - 1, new_step)
+            
+            workflow["steps"] = steps
+            workflow["total_steps"] = len(steps)
+            
+            return {
+                "success": True,
+                "change_description": f"Added {connector_name.replace('_', ' ')} task at position {task_number}"
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error adding task to workflow: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _get_default_parameters(self, connector_name: str) -> Dict[str, Any]:
+        """
+        Get default parameters for a connector.
+        """
+        defaults = {
+            "perplexity_search": {
+                "query": "search query",
+                "max_results": 5
+            },
+            "gmail_connector": {
+                "to": "recipient@example.com",
+                "subject": "Email subject",
+                "body": "Email body"
+            },
+            "google_sheets": {
+                "spreadsheet_id": "",
+                "range": "A1:Z100",
+                "operation": "read"
+            }
+        }
+        
+        return defaults.get(connector_name, {})
+    
+    async def _generate_task_parameters(self, connector_name: str, task_description: str, workflow: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate appropriate parameters for a task using AI.
+        """
+        try:
+            # Use the workflow planner's AI to generate parameters
+            if hasattr(self, 'workflow_planner') and self.workflow_planner:
+                # Create a simple workflow request for parameter generation
+                simple_request = f"Create a {connector_name} task: {task_description}"
+                
+                # Use the planner to generate a single-step workflow
+                plan_result = await self.workflow_planner.create_workflow_plan(simple_request, "temp_user")
+                
+                if plan_result.get("success") and plan_result.get("workflow", {}).get("steps"):
+                    first_step = plan_result["workflow"]["steps"][0]
+                    if first_step.get("connector_name") == connector_name:
+                        return first_step.get("parameters", {})
+            
+            # Fallback to defaults
+            return self._get_default_parameters(connector_name)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error generating AI parameters: {e}")
+            return self._get_default_parameters(connector_name)
+    
     def _format_modification_summary(self, modification_analysis: Dict[str, Any], modified_workflow: Dict[str, Any]) -> str:
         """
         Format a summary of the modifications applied to the workflow.
@@ -3362,6 +3698,31 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
                     summary_parts.append(f"{i}. **Replaced {current} with {new}**")
                     summary_parts.append(f"   - Reason: {reason}")
                     summary_parts.append(f"   - Task #{change.get('task_number', 'Unknown')} updated\n")
+                
+                elif change["type"] == "task_addition":
+                    connector = change.get("new_connector", "Unknown").replace("_", " ").title()
+                    reason = change.get("reason", "User requested addition")
+                    task_num = change.get("task_number", "Unknown")
+                    
+                    summary_parts.append(f"{i}. **Added {connector} Task**")
+                    summary_parts.append(f"   - Reason: {reason}")
+                    summary_parts.append(f"   - Position: Task #{task_num}\n")
+                
+                elif change["type"] == "parameter_change":
+                    connector = change.get("current_connector", "Unknown").replace("_", " ").title()
+                    reason = change.get("reason", "User requested parameter update")
+                    task_num = change.get("task_number", "Unknown")
+                    
+                    summary_parts.append(f"{i}. **Updated {connector} Parameters**")
+                    summary_parts.append(f"   - Reason: {reason}")
+                    summary_parts.append(f"   - Task #{task_num} modified\n")
+                
+                elif change["type"] == "remove_connector":
+                    connector = change.get("current_connector", "Unknown").replace("_", " ").title()
+                    reason = change.get("reason", "User requested removal")
+                    
+                    summary_parts.append(f"{i}. **Removed {connector}**")
+                    summary_parts.append(f"   - Reason: {reason}\n")
             
             summary_parts.append("\n🚀 **Your workflow is ready to use with these changes!**")
             summary_parts.append("\nThe modifications have been applied automatically. You can continue using your workflow or request additional changes.")

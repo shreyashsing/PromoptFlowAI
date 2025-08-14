@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
+import { DynamicSelect } from '@/components/ui/dynamic-select';
 import {
     Save,
     TestTube,
@@ -61,7 +62,9 @@ interface YouTubeConnectorModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSave: (config: YouTubeConfig) => Promise<void>;
+    initialConfig?: Partial<YouTubeConfig>; // Saved configuration
     initialData?: any; // AI-generated parameters
+    mode?: 'create' | 'edit';
 }
 
 interface ActionParameter {
@@ -466,8 +469,15 @@ const YOUTUBE_ACTIONS: Record<string, YouTubeAction> = {
     }
 };
 
-export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: YouTubeConnectorModalProps) {
-    const { user } = useAuth();
+export function YouTubeConnectorModal({
+    isOpen,
+    onClose,
+    onSave,
+    initialConfig,
+    initialData,
+    mode = 'create'
+}: YouTubeConnectorModalProps) {
+    const { user, session } = useAuth();
     const [selectedAction, setSelectedAction] = useState<string>('video_getAll');
     const [parameters, setParameters] = useState<Record<string, any>>({});
     const [authConfig, setAuthConfig] = useState({
@@ -477,6 +487,95 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
     const [isLoading, setIsLoading] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [activeTab, setActiveTab] = useState('action');
+    const [authStatus, setAuthStatus] = useState<'none' | 'authenticated' | 'error'>('none');
+
+    // Check authentication status
+    const checkAuthStatus = async () => {
+        if (!session?.access_token) {
+            console.log('🔐 YouTube Modal: No session token available');
+            return;
+        }
+
+        console.log('🔐 YouTube Modal: Checking authentication status...');
+
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/v1/auth/tokens`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                const tokens = await response.json();
+                console.log('🔐 YouTube Modal: Retrieved tokens:', Object.keys(tokens));
+
+                // Check for YouTube-specific token in the tokens array
+                const tokensList = tokens.tokens || [];
+
+                const youtubeTokenRecord = tokensList.find((token: any) => {
+                    const isYoutube = token.connector_name === 'youtube';
+                    const isOAuth = token.token_type?.toLowerCase() === 'oauth2' ||
+                        token.token_type === 'OAUTH2' ||
+                        token.token_type === 'oauth';
+                    return isYoutube && isOAuth;
+                });
+
+                if (youtubeTokenRecord) {
+                    console.log('🔐 YouTube Modal: Found valid YouTube token');
+                    setAuthStatus('authenticated');
+                    // Note: We don't set the actual token values here since they're encrypted
+                    // The actual tokens will be retrieved by the backend when needed
+                } else {
+                    console.log('🔐 YouTube Modal: No valid YouTube token found');
+                    console.log('🔐 YouTube Modal: Available tokens:', tokensList.map((t: any) => ({ name: t.connector_name, type: t.token_type })));
+                    setAuthStatus('none');
+                }
+            } else {
+                console.error('🔐 YouTube Modal: Failed to check auth status:', response.status);
+                setAuthStatus('none');
+            }
+        } catch (error) {
+            console.error('🔐 YouTube Modal: Error checking auth status:', error);
+            setAuthStatus('none');
+        }
+    };
+
+    // Initialize configuration - reload every time modal opens with saved config
+    useEffect(() => {
+        if (isOpen && initialConfig) {
+            console.log('🔄 YouTube Modal: Loading saved configuration:', initialConfig);
+
+            // Load saved parameters from settings
+            if (initialConfig.settings) {
+                console.log('🔄 YouTube Modal: Loading saved parameters:', initialConfig.settings);
+                setParameters(prev => ({ ...prev, ...initialConfig.settings }));
+
+                // Update selected action if available
+                if (initialConfig.settings.operation) {
+                    setSelectedAction(initialConfig.settings.operation);
+                }
+            }
+
+            // Load auth config if available
+            if (initialConfig.auth_config) {
+                setAuthConfig(prev => ({ ...prev, ...initialConfig.auth_config }));
+                if (initialConfig.auth_config.access_token) {
+                    setAuthStatus('authenticated');
+                }
+            }
+        }
+    }, [isOpen, initialConfig]);
+
+    // Check authentication status when modal opens
+    useEffect(() => {
+        if (isOpen) {
+            console.log('🔐 YouTube Modal: Modal opened, checking auth status');
+            checkAuthStatus();
+        }
+    }, [isOpen]);
 
     const currentAction = YOUTUBE_ACTIONS[selectedAction as keyof typeof YOUTUBE_ACTIONS];
 
@@ -499,7 +598,7 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
     useEffect(() => {
         if (initialData && Object.keys(initialData).length > 0) {
             console.log('🤖 YouTube Modal: Received AI-generated parameters:', initialData);
-            
+
             // Update parameters with AI-generated data
             setParameters(prev => ({
                 ...prev,
@@ -507,8 +606,8 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
             }));
 
             // Set the action if provided in initialData
-            if (initialData.action) {
-                setSelectedAction(initialData.action);
+            if (initialData.operation || initialData.action) {
+                setSelectedAction(initialData.operation || initialData.action);
             }
         }
     }, [initialData]);
@@ -520,26 +619,146 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
         }));
     };
 
+    const handleOAuthConnect = async () => {
+        setIsLoading(true);
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/v1/auth/oauth/initiate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session?.access_token}`
+                },
+                body: JSON.stringify({
+                    connector_name: 'youtube',
+                    redirect_uri: `${window.location.origin}/auth/oauth/callback`
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`OAuth initiate failed: ${response.status}`);
+            }
+
+            const { authorization_url, state } = await response.json();
+
+            // Store OAuth state and connector name for callback
+            localStorage.setItem('oauth_state', state);
+            localStorage.setItem('oauth_connector', 'youtube');
+
+            // Open OAuth popup
+            const popup = window.open(authorization_url, 'oauth', 'width=500,height=600');
+
+            if (popup) {
+                // Listen for messages from the popup
+                const handleMessage = (event: MessageEvent) => {
+                    if (event.origin !== window.location.origin) return;
+
+                    if (event.data.type === 'OAUTH_SUCCESS' || event.data.type === 'OAUTH_ERROR') {
+                        window.removeEventListener('message', handleMessage);
+                        setTimeout(() => {
+                            console.log('🔐 YouTube Modal: OAuth completed, checking auth status');
+                            checkAuthStatus();
+                        }, 2000); // Increased delay to allow database commit
+                    }
+                };
+
+                window.addEventListener('message', handleMessage);
+
+                // Fallback: Check if popup is closed (may not work due to CORS)
+                const checkClosed = setInterval(() => {
+                    try {
+                        if (popup.closed) {
+                            clearInterval(checkClosed);
+                            window.removeEventListener('message', handleMessage);
+                            setTimeout(() => {
+                                console.log('🔐 YouTube Modal: OAuth popup closed, checking auth status');
+                                checkAuthStatus();
+                            }, 2000); // Increased delay to allow database commit
+                        }
+                    } catch (error) {
+                        // Ignore CORS errors, rely on message-based approach
+                    }
+                }, 1000);
+
+                // Cleanup after 5 minutes
+                setTimeout(() => {
+                    clearInterval(checkClosed);
+                    window.removeEventListener('message', handleMessage);
+                }, 300000);
+            }
+        } catch (error) {
+            console.error('OAuth error:', error);
+            setAuthStatus('error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleDisconnect = async () => {
+        setIsLoading(true);
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/v1/auth/oauth/disconnect`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session?.access_token}`
+                },
+                body: JSON.stringify({ connector_name: 'youtube' })
+            });
+
+            if (response.ok) {
+                setAuthStatus('none');
+                setAuthConfig({ access_token: '', refresh_token: '' });
+                console.log('🔐 YouTube: Successfully disconnected');
+            } else {
+                console.error('Failed to disconnect:', response.status);
+            }
+        } catch (error) {
+            console.error('Disconnect error:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleTestConnection = async () => {
+        if (authStatus !== 'authenticated') {
+            setTestResult({ success: false, message: 'Please authenticate first' });
+            return;
+        }
+
         setIsLoading(true);
         setTestResult(null);
 
         try {
-            // Simulate connection test
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            // Test connection by calling the backend YouTube connector test
+            const response = await fetch('/api/v1/connectors/youtube/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session?.access_token}`
+                },
+                body: JSON.stringify({
+                    resource: 'channel',
+                    operation: 'channel_getAll',
+                    part: ['snippet'],
+                    maxResults: 1
+                })
+            });
 
-            if (!authConfig.access_token) {
+            if (response.ok) {
+                const data = await response.json();
+                setTestResult({
+                    success: true,
+                    message: 'Successfully connected to YouTube API! Connection test passed.'
+                });
+            } else {
+                const errorData = await response.json().catch(() => ({}));
                 setTestResult({
                     success: false,
-                    message: 'Access token is required for YouTube API authentication'
+                    message: `Failed to connect to YouTube API: ${errorData.detail || 'Unknown error'}`
                 });
-                return;
             }
-
-            setTestResult({
-                success: true,
-                message: 'Successfully connected to YouTube API! Ready to perform operations.'
-            });
         } catch (error) {
             setTestResult({
                 success: false,
@@ -560,8 +779,8 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                 description: 'YouTube API integration for video and channel management',
                 auth_type: 'oauth',
                 auth_config: {
-                    access_token: authConfig.access_token,
-                    refresh_token: authConfig.refresh_token,
+                    // Token data is stored encrypted in the backend
+                    // We don't store actual tokens in the frontend for security
                     scopes: [
                         'https://www.googleapis.com/auth/youtube',
                         'https://www.googleapis.com/auth/youtube.upload',
@@ -573,9 +792,10 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                     operation: selectedAction,
                     ...parameters
                 },
-                status: authConfig.access_token ? 'configured' : 'needs_auth'
+                status: authStatus === 'authenticated' ? 'configured' : 'needs_auth'
             };
 
+            console.log('🔄 YouTube Modal: Saving configuration:', config);
             await onSave(config);
             onClose();
         } catch (error) {
@@ -638,6 +858,42 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                     />
                 );
             default:
+                // Check if this field should use dynamic data
+                if (param.name === 'videoId') {
+                    return (
+                        <DynamicSelect
+                            connectorName="youtube"
+                            fieldName="video_id"
+                            value={value}
+                            onValueChange={(val) => handleParameterChange(param.name, val)}
+                            placeholder="Select a YouTube video..."
+                            searchable={true}
+                        />
+                    );
+                } else if (param.name === 'playlistId') {
+                    return (
+                        <DynamicSelect
+                            connectorName="youtube"
+                            fieldName="playlist_id"
+                            value={value}
+                            onValueChange={(val) => handleParameterChange(param.name, val)}
+                            placeholder="Select a YouTube playlist..."
+                            searchable={true}
+                        />
+                    );
+                } else if (param.name === 'channelId') {
+                    return (
+                        <DynamicSelect
+                            connectorName="youtube"
+                            fieldName="channel_id"
+                            value={value}
+                            onValueChange={(val) => handleParameterChange(param.name, val)}
+                            placeholder="Select a YouTube channel..."
+                            searchable={true}
+                        />
+                    );
+                }
+
                 return (
                     <Input
                         type="text"
@@ -663,10 +919,10 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                 </DialogHeader>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger value="action">Action & Parameters</TabsTrigger>
                         <TabsTrigger value="auth">Authentication</TabsTrigger>
-                        <TabsTrigger value="test">Test & Validate</TabsTrigger>
+
                     </TabsList>
 
                     <TabsContent value="action" className="space-y-6">
@@ -797,45 +1053,100 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                             <CardHeader>
                                 <CardTitle className="flex items-center gap-2">
                                     <Key className="h-4 w-4" />
-                                    OAuth2 Authentication
+                                    YouTube Authentication
                                 </CardTitle>
                                 <CardDescription>
-                                    Configure YouTube API OAuth2 credentials for secure access
+                                    Connect your YouTube account to access videos, channels, and playlists
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <Alert>
-                                    <Info className="h-4 w-4" />
-                                    <AlertDescription>
-                                        YouTube API requires OAuth2 authentication. You'll need to obtain access tokens through the Google OAuth2 flow.
-                                        Required scopes: youtube, youtube.upload, youtube.readonly
-                                    </AlertDescription>
-                                </Alert>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="access_token">Access Token *</Label>
-                                    <Input
-                                        id="access_token"
-                                        type="password"
-                                        value={authConfig.access_token}
-                                        onChange={(e) => setAuthConfig(prev => ({ ...prev, access_token: e.target.value }))}
-                                        placeholder="Enter your YouTube API access token"
-                                    />
+                                {/* Authentication Status Display */}
+                                <div className="flex items-center justify-between p-4 border rounded-lg">
+                                    <div className="flex items-center space-x-3">
+                                        {authStatus === 'authenticated' ? (
+                                            <CheckCircle className="h-5 w-5 text-green-500" />
+                                        ) : authStatus === 'error' ? (
+                                            <XCircle className="h-5 w-5 text-red-500" />
+                                        ) : (
+                                            <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                                        )}
+                                        <div>
+                                            <p className="font-medium">
+                                                {authStatus === 'authenticated' ? 'Connected to YouTube' :
+                                                    authStatus === 'error' ? 'Authentication Error' :
+                                                        'Not Connected'}
+                                            </p>
+                                            <p className="text-sm text-gray-500">
+                                                {authStatus === 'authenticated' ? 'You can access your YouTube content' :
+                                                    authStatus === 'error' ? 'Please try authenticating again' :
+                                                        'Connect to access your YouTube account'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex space-x-2">
+                                        {authStatus === 'authenticated' ? (
+                                            <>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={handleTestConnection}
+                                                    disabled={isLoading}
+                                                >
+                                                    <TestTube className="h-4 w-4 mr-2" />
+                                                    Test
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={handleDisconnect}
+                                                    disabled={isLoading}
+                                                >
+                                                    Disconnect
+                                                </Button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Button
+                                                    onClick={handleOAuthConnect}
+                                                    disabled={isLoading}
+                                                    size="sm"
+                                                >
+                                                    <Youtube className="h-4 w-4 mr-2" />
+                                                    Connect YouTube
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    onClick={checkAuthStatus}
+                                                    disabled={isLoading}
+                                                    size="sm"
+                                                >
+                                                    Refresh Status
+                                                </Button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <Label htmlFor="refresh_token">Refresh Token</Label>
-                                    <Input
-                                        id="refresh_token"
-                                        type="password"
-                                        value={authConfig.refresh_token}
-                                        onChange={(e) => setAuthConfig(prev => ({ ...prev, refresh_token: e.target.value }))}
-                                        placeholder="Enter your refresh token (optional)"
-                                    />
-                                </div>
+                                {/* Test Results */}
+                                {testResult && (
+                                    <Alert className={testResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
+                                        {testResult.success ? (
+                                            <CheckCircle className="h-4 w-4 text-green-600" />
+                                        ) : (
+                                            <XCircle className="h-4 w-4 text-red-600" />
+                                        )}
+                                        <AlertDescription className={testResult.success ? "text-green-800" : "text-red-800"}>
+                                            {testResult.message}
+                                        </AlertDescription>
+                                    </Alert>
+                                )}
 
+                                {/* OAuth Setup Instructions */}
                                 <div className="bg-blue-50 p-4 rounded-lg">
-                                    <h4 className="font-medium text-blue-900 mb-2">OAuth2 Setup Instructions:</h4>
+                                    <h4 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                                        <Info className="h-4 w-4" />
+                                        OAuth2 Setup Instructions:
+                                    </h4>
                                     <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
                                         <li>Go to the Google Cloud Console</li>
                                         <li>Create or select a project</li>
@@ -848,67 +1159,7 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                         </Card>
                     </TabsContent>
 
-                    <TabsContent value="test" className="space-y-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="flex items-center gap-2">
-                                    <TestTube className="h-4 w-4" />
-                                    Test Connection
-                                </CardTitle>
-                                <CardDescription>
-                                    Verify your YouTube API configuration and credentials
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <Button
-                                    onClick={handleTestConnection}
-                                    disabled={isLoading || !authConfig.access_token}
-                                    className="w-full"
-                                >
-                                    {isLoading ? 'Testing Connection...' : 'Test YouTube API Connection'}
-                                </Button>
 
-                                {testResult && (
-                                    <Alert className={testResult.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
-                                        {testResult.success ? (
-                                            <CheckCircle className="h-4 w-4 text-green-600" />
-                                        ) : (
-                                            <XCircle className="h-4 w-4 text-red-600" />
-                                        )}
-                                        <AlertDescription className={testResult.success ? 'text-green-800' : 'text-red-800'}>
-                                            {testResult.message}
-                                        </AlertDescription>
-                                    </Alert>
-                                )}
-
-                                <div className="bg-gray-50 p-4 rounded-lg">
-                                    <h4 className="font-medium mb-2">Configuration Summary:</h4>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span>Selected Action:</span>
-                                            <Badge variant="outline">{currentAction?.label || 'None'}</Badge>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Resource Type:</span>
-                                            <Badge variant="outline">{currentAction?.resource || 'None'}</Badge>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Authentication:</span>
-                                            <Badge variant={authConfig.access_token ? 'default' : 'destructive'}>
-                                                {authConfig.access_token ? 'Configured' : 'Missing'}
-                                            </Badge>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Required Parameters:</span>
-                                            <Badge variant="outline">
-                                                {currentAction?.requiredParams?.length || 0} required
-                                            </Badge>
-                                        </div>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
                 </Tabs>
 
                 <div className="flex justify-end gap-2 pt-4 border-t">
@@ -917,7 +1168,7 @@ export function YouTubeConnectorModal({ isOpen, onClose, onSave, initialData }: 
                     </Button>
                     <Button
                         onClick={handleSave}
-                        disabled={isLoading || !authConfig.access_token}
+                        disabled={authStatus !== 'authenticated'}
                         className="bg-red-600 hover:bg-red-700"
                     >
                         <Save className="h-4 w-4 mr-2" />

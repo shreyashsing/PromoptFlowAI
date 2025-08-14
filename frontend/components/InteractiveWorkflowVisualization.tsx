@@ -594,6 +594,11 @@ export default function InteractiveWorkflowVisualization({
         const connectorName = node?.connector_name || null;
         const existingParameters = node?.parameters || {};
         
+        // Debug logging
+        console.log('🔍 Modal Debug - Node:', node);
+        console.log('🔍 Modal Debug - Existing Parameters:', existingParameters);
+        console.log('🔍 Modal Debug - Connector Name:', connectorName);
+        
         const modalProps = {
           isOpen: configModalOpen,
           onClose: () => {
@@ -601,6 +606,7 @@ export default function InteractiveWorkflowVisualization({
             setConfigNodeId(null);
           },
           onSave: async (config: any) => {
+            console.log('🔍 Modal Debug - Saving Config:', config);
             await handleConfigSave(configNodeId, config);
           },
           initialConfig: existingParameters

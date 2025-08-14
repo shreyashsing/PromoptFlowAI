@@ -13,6 +13,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Languages, Globe, Settings, TestTube, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
+interface GoogleTranslateConfig {
+  operation: string;
+  text: string;
+  target_language: string;
+  source_language: string;
+  format: string;
+  model: string;
+}
+
+interface AuthConfig {
+  access_token: string;
+}
+
 interface GoogleTranslateConnectorModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -26,7 +39,7 @@ export function GoogleTranslateConnectorModal({
   onSave,
   initialConfig = {}
 }: GoogleTranslateConnectorModalProps) {
-  const [config, setConfig] = useState({
+  const [config, setConfig] = useState<GoogleTranslateConfig>({
     operation: 'translate',
     text: '',
     target_language: '',
@@ -36,7 +49,7 @@ export function GoogleTranslateConnectorModal({
     ...initialConfig
   });
 
-  const [authConfig, setAuthConfig] = useState({
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({
     access_token: '',
     ...initialConfig.auth
   });
@@ -281,7 +294,7 @@ export function GoogleTranslateConnectorModal({
             <TabsTrigger value="configuration">Configuration</TabsTrigger>
             <TabsTrigger value="authentication">Authentication</TabsTrigger>
             <TabsTrigger value="examples">Examples</TabsTrigger>
-            <TabsTrigger value="test">Test</TabsTrigger>
+
           </TabsList>
 
           <TabsContent value="configuration" className="space-y-4">

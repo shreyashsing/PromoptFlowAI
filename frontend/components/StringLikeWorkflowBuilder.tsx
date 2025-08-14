@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { 
-  Bot, CheckCircle, Play, ArrowRight, Zap, Settings, MessageSquare, 
+import {
+  Bot, CheckCircle, Play, ArrowRight, Zap, Settings, MessageSquare,
   Workflow, Loader2, Clock, Eye, Layers, GitBranch, Mail, Globe,
   FileText, Webhook, Database, MoreHorizontal
 } from 'lucide-react';
@@ -79,7 +79,7 @@ const WorkflowNode = ({ data }: { data: any }) => {
   };
 
   return (
-    <div 
+    <div
       className="bg-gray-800 border border-gray-600 rounded-lg p-4 min-w-[200px] shadow-lg hover:border-blue-500 transition-colors cursor-pointer"
       onClick={handleClick}
     >
@@ -94,7 +94,7 @@ const WorkflowNode = ({ data }: { data: any }) => {
         </div>
         <div className={`w-2 h-2 rounded-full ${getStatusColor(data.status)}`} />
       </div>
-      
+
       {data.description && (
         <p className="text-gray-400 text-xs mb-3">{data.description}</p>
       )}
@@ -109,12 +109,12 @@ const WorkflowNode = ({ data }: { data: any }) => {
           ))}
         </div>
       )}
-      
+
       <div className="flex items-center justify-between text-xs text-gray-500 mt-3">
         <span>{data.status || 'pending'}</span>
         <Settings className="w-3 h-3 opacity-50" />
       </div>
-      
+
       <div className="mt-2 text-xs text-blue-400 text-center">
         Click to configure
       </div>
@@ -139,7 +139,7 @@ export default function StringLikeWorkflowBuilder() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string>('');
   const [buildingState, setBuildingState] = useState<BuildingState>('initial');
-  const [conversation, setConversation] = useState<Array<{role: string, content: string, timestamp: Date}>>([]);
+  const [conversation, setConversation] = useState<Array<{ role: string, content: string, timestamp: Date }>>([]);
   const [currentResponse, setCurrentResponse] = useState<WorkflowBuildResponse | null>(null);
   const [userInput, setUserInput] = useState('');
   const [workflowPlan, setWorkflowPlan] = useState<any>(null);
@@ -205,7 +205,7 @@ export default function StringLikeWorkflowBuilder() {
 
   // Update progress step
   const updateProgressStep = (id: string, status: 'completed' | 'failed', details?: string) => {
-    setProgressSteps(prev => prev.map(step => 
+    setProgressSteps(prev => prev.map(step =>
       step.id === id ? { ...step, status, details } : step
     ));
   };
@@ -228,7 +228,7 @@ export default function StringLikeWorkflowBuilder() {
       });
 
       // Update the analyzing step to completed
-      setProgressSteps(prev => prev.map(step => 
+      setProgressSteps(prev => prev.map(step =>
         step.title === 'Analyzing your request...' ? { ...step, status: 'completed' } : step
       ));
 
@@ -236,7 +236,7 @@ export default function StringLikeWorkflowBuilder() {
       setCurrentResponse(response);
       setBuildingState(response.conversation_state as BuildingState);
       setProgress(80);
-      
+
       // Add to conversation
       setConversation([
         { role: 'user', content: query, timestamp: new Date() },
@@ -244,7 +244,7 @@ export default function StringLikeWorkflowBuilder() {
       ]);
 
       addProgressStep('Response generated', 'completed');
-      
+
       // If we're still in planning after first response, move to configuring for better UX
       if (response.conversation_state === 'planning') {
         setBuildingState('configuring');
@@ -262,8 +262,8 @@ export default function StringLikeWorkflowBuilder() {
 
     } catch (error) {
       console.error('Error starting workflow building:', error);
-      setConversation(prev => [...prev, 
-        { role: 'error', content: 'Failed to start workflow building. Please try again.', timestamp: new Date() }
+      setConversation(prev => [...prev,
+      { role: 'error', content: 'Failed to start workflow building. Please try again.', timestamp: new Date() }
       ]);
     } finally {
       setLoading(false);
@@ -283,13 +283,13 @@ export default function StringLikeWorkflowBuilder() {
       });
 
       // Update the processing step to completed
-      setProgressSteps(prev => prev.map(step => 
+      setProgressSteps(prev => prev.map(step =>
         step.title === 'Processing your message...' ? { ...step, status: 'completed' } : step
       ));
 
       setCurrentResponse(response);
       setBuildingState(response.conversation_state as BuildingState);
-      
+
       // Add to conversation
       setConversation(prev => [
         ...prev,
@@ -298,7 +298,7 @@ export default function StringLikeWorkflowBuilder() {
       ]);
 
       addProgressStep('Response generated', 'completed');
-      
+
       // Ensure we don't get stuck in planning state
       if (response.conversation_state === 'planning') {
         setBuildingState('configuring');
@@ -315,11 +315,11 @@ export default function StringLikeWorkflowBuilder() {
 
     } catch (error) {
       console.error('Error continuing workflow building:', error);
-      setProgressSteps(prev => prev.map(step => 
+      setProgressSteps(prev => prev.map(step =>
         step.title === 'Processing your message...' ? { ...step, status: 'failed', details: 'Failed to process message' } : step
       ));
-      setConversation(prev => [...prev, 
-        { role: 'error', content: 'Failed to continue building. Please try again.', timestamp: new Date() }
+      setConversation(prev => [...prev,
+      { role: 'error', content: 'Failed to continue building. Please try again.', timestamp: new Date() }
       ]);
     } finally {
       setLoading(false);
@@ -341,7 +341,7 @@ export default function StringLikeWorkflowBuilder() {
               <p className="text-gray-400 text-sm">AI-powered automation</p>
             </div>
           </div>
-          
+
           {buildingState === 'initial' && (
             <div className="space-y-3">
               <Textarea
@@ -351,7 +351,7 @@ export default function StringLikeWorkflowBuilder() {
                 className="w-full bg-gray-700 border-gray-600 text-white placeholder-gray-400 resize-none"
                 rows={3}
               />
-              <Button 
+              <Button
                 onClick={startWorkflowBuilding}
                 disabled={loading || !query.trim()}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
@@ -373,7 +373,7 @@ export default function StringLikeWorkflowBuilder() {
         </div>
 
         {/* Scrollable Content Area - Calculated height to leave room for input */}
-        <div className="flex-1 overflow-hidden" style={{maxHeight: 'calc(100vh - 280px)'}}>
+        <div className="flex-1 overflow-hidden" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           <ScrollArea className="h-full">
             <div className="p-4 space-y-4">
               {/* Progress Section */}
@@ -383,7 +383,7 @@ export default function StringLikeWorkflowBuilder() {
                     <Settings className="w-4 h-4 text-blue-400" />
                     <h3 className="font-medium text-sm">Progress</h3>
                   </div>
-                  
+
                   <div className="space-y-2 max-h-32 overflow-y-auto">
                     {progressSteps.map((step) => (
                       <div key={step.id} className="flex items-start gap-3 p-2 rounded bg-gray-700">
@@ -407,7 +407,7 @@ export default function StringLikeWorkflowBuilder() {
                       </div>
                     ))}
                   </div>
-                  
+
                   {progress > 0 && (
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs text-gray-400">
@@ -427,17 +427,16 @@ export default function StringLikeWorkflowBuilder() {
                     <MessageSquare className="w-4 h-4 text-green-400" />
                     <h3 className="font-medium text-sm">Conversation</h3>
                   </div>
-                  
+
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     {conversation.map((msg, index) => (
                       <div key={`msg-${index}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] ${
-                          msg.role === 'user' 
-                            ? 'bg-blue-600 ml-8' 
+                        <div className={`max-w-[80%] ${msg.role === 'user'
+                            ? 'bg-blue-600 ml-8'
                             : msg.role === 'error'
-                            ? 'bg-red-900 border border-red-600'
-                            : 'bg-gray-700'
-                        } p-3 rounded-lg`}>
+                              ? 'bg-red-900 border border-red-600'
+                              : 'bg-gray-700'
+                          } p-3 rounded-lg`}>
                           <div className="whitespace-pre-wrap break-words text-sm">{msg.content}</div>
                         </div>
                       </div>
@@ -451,7 +450,7 @@ export default function StringLikeWorkflowBuilder() {
 
         {/* Input Field - Fixed at bottom with guaranteed visibility */}
         {conversation.length > 0 && (
-          <div className="p-3 border-t-4 border-blue-500 bg-gray-800 flex-shrink-0" style={{minHeight: '120px'}}>
+          <div className="p-3 border-t-4 border-blue-500 bg-gray-800 flex-shrink-0" style={{ minHeight: '120px' }}>
             <div className="text-yellow-400 text-xs mb-2 font-bold">
               💬 Chat Active (Messages: {conversation.length}, State: {buildingState}, Loading: {loading ? 'yes' : 'no'})
             </div>
@@ -463,13 +462,13 @@ export default function StringLikeWorkflowBuilder() {
                 onChange={(e) => setUserInput(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && !loading && continueBuilding()}
                 className="flex-1 px-3 py-2 bg-gray-600 border-2 border-blue-400 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:border-blue-300 text-sm"
-                style={{height: '40px'}}
+                style={{ height: '40px' }}
               />
-              <button 
+              <button
                 onClick={continueBuilding}
                 disabled={loading || !userInput.trim()}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg flex items-center gap-2 text-sm"
-                style={{height: '40px'}}
+                style={{ height: '40px' }}
               >
                 {loading ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -549,14 +548,14 @@ export default function StringLikeWorkflowBuilder() {
           connectorConfig={selectedConnector.parameters}
           onSave={(config: any) => {
             // Update the node in the React Flow graph
-            setNodes(prevNodes => prevNodes.map(node => 
-              node.id === selectedConnector.id ? { 
-                ...node, 
-                data: { 
-                  ...node.data, 
+            setNodes(prevNodes => prevNodes.map(node =>
+              node.id === selectedConnector.id ? {
+                ...node,
+                data: {
+                  ...node.data,
                   parameters: config,
                   status: 'configured'
-                } 
+                }
               } : node
             ));
             setSelectedConnector(null);

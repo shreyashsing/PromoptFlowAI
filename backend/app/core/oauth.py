@@ -223,7 +223,8 @@ GOOGLE_OAUTH_CONFIG = OAuthConfig(
     scopes=[
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/spreadsheets"
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly"
     ],
     redirect_uri="http://localhost:8000/auth/oauth/callback"
 )

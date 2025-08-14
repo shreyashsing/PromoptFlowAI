@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { DynamicSelect } from '@/components/ui/dynamic-select';
 import {
     Save,
     TestTube,
@@ -49,7 +50,8 @@ import {
     Heading3,
     ListOrdered,
     ListTodo,
-    ExternalLink
+    ExternalLink,
+    Loader2
 } from 'lucide-react';
 
 interface NotionConfig {
@@ -64,13 +66,18 @@ interface NotionConfig {
         [key: string]: any;
     };
     status: 'configured' | 'needs_auth' | 'error';
+    parameters?: {
+        [key: string]: any;
+    };
 }
 
 interface NotionConnectorModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSave: (config: NotionConfig) => Promise<void>;
+    initialConfig?: Partial<NotionConfig>; // Saved configuration
     initialData?: any; // AI-generated parameters
+    mode?: 'create' | 'edit';
 }
 
 // Notion resource definitions with their operations
@@ -218,7 +225,14 @@ const OPERATION_PARAMETERS: Record<string, OperationParameter[]> = {
     get_all_users: []
 };
 
-export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: NotionConnectorModalProps) {
+export function NotionConnectorModal({
+    isOpen,
+    onClose,
+    onSave,
+    initialConfig,
+    initialData,
+    mode = 'create'
+}: NotionConnectorModalProps) {
     const { user, session } = useAuth();
     const [config, setConfig] = useState<NotionConfig>({
         name: 'notion',
@@ -243,6 +257,80 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
     const [isLoading, setIsLoading] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({});
+    const [authStatus, setAuthStatus] = useState<'none' | 'authenticated' | 'error'>('none');
+
+    // Check authentication status
+    const checkAuthStatus = async () => {
+        if (!session?.access_token) {
+            console.log('🔐 Notion Modal: No session token available');
+            return;
+        }
+        
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/v1/auth/tokens`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const notionToken = data.tokens?.find((token: any) => {
+                    return token.connector_name === 'notion' && 
+                           token.token_type === 'api_key';
+                });
+
+                if (notionToken) {
+                    setAuthStatus('authenticated');
+                } else {
+                    setAuthStatus('none');
+                }
+            } else {
+                setAuthStatus('none');
+            }
+        } catch (error) {
+            console.error('🔐 Notion Modal: Error checking auth status:', error);
+            setAuthStatus('none');
+        }
+    };
+
+    // Initialize configuration - reload every time modal opens with saved config
+    useEffect(() => {
+        if (isOpen && initialConfig) {
+            console.log('🔄 Notion Modal: Loading saved configuration:', initialConfig);
+
+            // Load general config
+            setConfig(prev => ({ ...prev, ...initialConfig }));
+
+            // Load saved parameters
+            if (initialConfig.parameters) {
+                console.log('🔄 Notion Modal: Loading saved parameters:', initialConfig.parameters);
+                setParameters(prev => ({ ...prev, ...initialConfig.parameters }));
+
+                // Update resource and operation if available
+                if (initialConfig.parameters.resource) {
+                    setSelectedResource(initialConfig.parameters.resource);
+                }
+                if (initialConfig.parameters.operation) {
+                    setSelectedOperation(initialConfig.parameters.operation);
+                }
+            }
+
+            // Check if API key is configured
+            if (initialConfig.auth_config?.api_key) {
+                setAuthStatus('authenticated');
+            }
+        }
+    }, [isOpen, initialConfig]);
+
+    // Check authentication status when modal opens
+    useEffect(() => {
+        if (!isOpen) return;
+        checkAuthStatus();
+    }, [isOpen, session?.access_token]);
 
     // Update operation when resource changes
     useEffect(() => {
@@ -328,9 +416,46 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
         }
     };
 
-    const handleTestConnection = async () => {
+    const handleSaveApiKey = async () => {
         if (!config.auth_config.api_key) {
             setTestResult({ success: false, message: 'Please enter your Notion integration token' });
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${baseUrl}/api/v1/auth/tokens`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session?.access_token}`,
+                },
+                body: JSON.stringify({
+                    connector_name: 'notion',
+                    token_type: 'api_key',
+                    token_data: {
+                        api_key: config.auth_config.api_key
+                    }
+                })
+            });
+
+            if (response.ok) {
+                setAuthStatus('authenticated');
+                setTestResult({ success: true, message: 'Integration token saved successfully!' });
+            } else {
+                setTestResult({ success: false, message: 'Failed to save integration token' });
+            }
+        } catch (error) {
+            setTestResult({ success: false, message: 'Error saving integration token: ' + error });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleTestConnection = async () => {
+        if (authStatus !== 'authenticated') {
+            setTestResult({ success: false, message: 'Please authenticate first' });
             return;
         }
 
@@ -513,6 +638,32 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                 );
 
             default:
+                // Check if this field should use dynamic data
+                if (param.name.includes('_id') && ['database_id', 'page_id', 'user_id'].includes(param.name)) {
+                    return (
+                        <div key={param.name} className="space-y-2">
+                            <Label htmlFor={param.name}>
+                                {param.label}
+                                {param.required === true && <span className="text-red-500 ml-1">*</span>}
+                            </Label>
+                            <DynamicSelect
+                                connectorName="notion"
+                                fieldName={param.name}
+                                value={value}
+                                onValueChange={(val) => handleParameterChange(param.name, val)}
+                                placeholder={`Select ${param.label.toLowerCase()}...`}
+                                searchable={true}
+                                className={hasError ? 'border-red-500' : ''}
+                                context={param.name === 'page_id' ? { query: '' } : undefined}
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Select from your Notion workspace. Data is fetched from your authenticated account.
+                            </p>
+                            {hasError && <p className="text-sm text-red-500">{hasError}</p>}
+                        </div>
+                    );
+                }
+
                 return (
                     <div key={param.name} className="space-y-2">
                         <Label htmlFor={param.name}>
@@ -574,9 +725,9 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                             <Key className="w-4 h-4" />
                             Authentication
                         </TabsTrigger>
-                        <TabsTrigger value="advanced" className="flex items-center gap-2">
-                            <Info className="w-4 h-4" />
-                            Advanced
+                        <TabsTrigger value="test" className="flex items-center gap-2">
+                            <TestTube className="w-4 h-4" />
+                            Test
                         </TabsTrigger>
                     </TabsList>
 
@@ -664,20 +815,20 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                         )}
                     </TabsContent>
 
-                    <TabsContent value="authentication" className="space-y-6">
+                    <TabsContent value="authentication" className="space-y-4">
                         <Card>
                             <CardHeader>
-                                <CardTitle className="flex items-center gap-2">
-                                    <Key className="w-5 h-5" />
-                                    Notion Integration Token
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Key className="h-5 w-5" />
+                                    <span>Integration Token Authentication</span>
                                 </CardTitle>
                                 <CardDescription>
-                                    Enter your Notion integration token to authenticate with the Notion API.
+                                    Enter your Notion integration token to authenticate.
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="api_key">Integration Token</Label>
+                                <div>
+                                    <Label htmlFor="api_key">Notion Integration Token</Label>
                                     <Input
                                         id="api_key"
                                         type="password"
@@ -686,15 +837,59 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                                             ...prev,
                                             auth_config: { ...prev.auth_config, api_key: e.target.value }
                                         }))}
-                                        placeholder="secret_..."
+                                        placeholder="secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                                        className="mt-1"
                                     />
+                                    <p className="text-sm text-gray-500 mt-1">
+                                        Get your integration token from the Notion integrations dashboard.
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center justify-between p-4 border rounded-lg">
+                                    <div className="flex items-center space-x-3">
+                                        {authStatus === 'authenticated' ? (
+                                            <CheckCircle className="h-5 w-5 text-green-500" />
+                                        ) : authStatus === 'error' ? (
+                                            <XCircle className="h-5 w-5 text-red-500" />
+                                        ) : (
+                                            <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                                        )}
+                                        <div>
+                                            <p className="font-medium">
+                                                {authStatus === 'authenticated' ? 'Integration Token Configured' :
+                                                 authStatus === 'error' ? 'Authentication Error' :
+                                                 'Not Authenticated'}
+                                            </p>
+                                            <p className="text-sm text-gray-500">
+                                                {authStatus === 'authenticated' ? 'Ready to use Notion API' :
+                                                 authStatus === 'error' ? 'Please check your integration token' :
+                                                 'Enter your integration token to get started'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Button
+                                        onClick={handleSaveApiKey}
+                                        disabled={isLoading || !config.auth_config.api_key}
+                                        variant={authStatus === 'authenticated' ? 'outline' : 'default'}
+                                    >
+                                        {isLoading ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                                Saving...
+                                            </>
+                                        ) : authStatus === 'authenticated' ? (
+                                            'Update Token'
+                                        ) : (
+                                            'Save Integration Token'
+                                        )}
+                                    </Button>
                                 </div>
 
                                 <Alert>
-                                    <ExternalLink className="w-4 h-4" />
+                                    <Info className="h-4 w-4" />
                                     <AlertDescription>
                                         <div className="space-y-2">
-                                            <p>To get your integration token:</p>
+                                            <p className="font-medium">To get your integration token:</p>
                                             <ol className="list-decimal list-inside space-y-1 text-sm">
                                                 <li>Go to <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Notion Integrations</a></li>
                                                 <li>Create a new integration or select an existing one</li>
@@ -704,27 +899,45 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                                         </div>
                                     </AlertDescription>
                                 </Alert>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
 
-                                <div className="flex gap-2">
-                                    <Button
-                                        onClick={handleTestConnection}
-                                        disabled={isLoading || !config.auth_config.api_key}
-                                        variant="outline"
-                                        className="flex items-center gap-2"
-                                    >
-                                        <TestTube className="w-4 h-4" />
-                                        {isLoading ? 'Testing...' : 'Test Connection'}
-                                    </Button>
-                                </div>
+                    <TabsContent value="test" className="space-y-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Test Connection</CardTitle>
+                                <CardDescription>
+                                    Test your Notion integration token and API connection.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <Button
+                                    onClick={handleTestConnection}
+                                    disabled={isLoading || authStatus !== 'authenticated'}
+                                    className="w-full"
+                                >
+                                    {isLoading ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                            Testing Connection...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <TestTube className="h-4 w-4 mr-2" />
+                                            Test Connection
+                                        </>
+                                    )}
+                                </Button>
 
                                 {testResult && (
-                                    <Alert className={testResult.success ? 'border-green-500' : 'border-red-500'}>
+                                    <Alert variant={testResult.success ? 'default' : 'destructive'}>
                                         {testResult.success ? (
-                                            <CheckCircle className="w-4 h-4 text-green-600" />
+                                            <CheckCircle className="h-4 w-4" />
                                         ) : (
-                                            <XCircle className="w-4 h-4 text-red-600" />
+                                            <XCircle className="h-4 w-4" />
                                         )}
-                                        <AlertDescription className={testResult.success ? 'text-green-700' : 'text-red-700'}>
+                                        <AlertDescription>
                                             {testResult.message}
                                         </AlertDescription>
                                     </Alert>
@@ -733,92 +946,7 @@ export function NotionConnectorModal({ isOpen, onClose, onSave, initialData }: N
                         </Card>
                     </TabsContent>
 
-                    <TabsContent value="advanced" className="space-y-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Advanced Settings</CardTitle>
-                                <CardDescription>
-                                    Configure advanced options for the Notion connector.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="flex items-center space-x-2">
-                                        <Switch
-                                            id="simple_output"
-                                            checked={config.settings.simple_output}
-                                            onCheckedChange={(checked) => setConfig(prev => ({
-                                                ...prev,
-                                                settings: { ...prev.settings, simple_output: checked }
-                                            }))}
-                                        />
-                                        <Label htmlFor="simple_output">Simple Output</Label>
-                                    </div>
 
-                                    <div className="flex items-center space-x-2">
-                                        <Switch
-                                            id="return_all"
-                                            checked={config.settings.return_all}
-                                            onCheckedChange={(checked) => setConfig(prev => ({
-                                                ...prev,
-                                                settings: { ...prev.settings, return_all: checked }
-                                            }))}
-                                        />
-                                        <Label htmlFor="return_all">Return All Results</Label>
-                                    </div>
-
-                                    <div className="flex items-center space-x-2">
-                                        <Switch
-                                            id="include_nested_blocks"
-                                            checked={config.settings.include_nested_blocks}
-                                            onCheckedChange={(checked) => setConfig(prev => ({
-                                                ...prev,
-                                                settings: { ...prev.settings, include_nested_blocks: checked }
-                                            }))}
-                                        />
-                                        <Label htmlFor="include_nested_blocks">Include Nested Blocks</Label>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="page_size">Page Size (1-100)</Label>
-                                    <Input
-                                        id="page_size"
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        value={config.settings.page_size}
-                                        onChange={(e) => setConfig(prev => ({
-                                            ...prev,
-                                            settings: { ...prev.settings, page_size: parseInt(e.target.value) || 100 }
-                                        }))}
-                                    />
-                                </div>
-                            </CardContent>
-                        </Card>
-
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Block Types Reference</CardTitle>
-                                <CardDescription>
-                                    Available block types for content creation.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {BLOCK_TYPES.map((blockType) => {
-                                        const Icon = blockType.icon;
-                                        return (
-                                            <div key={blockType.value} className="flex items-center gap-2 p-2 rounded border">
-                                                <Icon className="w-4 h-4" />
-                                                <span className="text-sm">{blockType.label}</span>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
                 </Tabs>
 
                 <div className="flex justify-end gap-2 pt-4 border-t">

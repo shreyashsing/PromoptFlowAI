@@ -14,9 +14,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { DynamicSelect } from '@/components/ui/dynamic-select';
 import {
     Save,
-    TestTube,
     CheckCircle,
     XCircle,
     AlertTriangle,
@@ -58,6 +58,9 @@ interface GmailConfig {
     settings: {
         [key: string]: any;
     };
+    parameters?: {
+        [key: string]: any;
+    };
 }
 
 interface GmailConnectorModalProps {
@@ -81,19 +84,19 @@ const gmailActions = [
     { value: 'mark_as_unread', label: 'Mark as Unread', icon: XCircle, category: 'Messages' },
     { value: 'add_labels', label: 'Add Labels', icon: Plus, category: 'Messages' },
     { value: 'remove_labels', label: 'Remove Labels', icon: Trash2, category: 'Messages' },
-    
+
     // Draft Operations
     { value: 'create_draft', label: 'Create Draft', icon: FileText, category: 'Drafts' },
     { value: 'get_draft', label: 'Get Draft', icon: Eye, category: 'Drafts' },
     { value: 'delete_draft', label: 'Delete Draft', icon: Trash2, category: 'Drafts' },
     { value: 'list_drafts', label: 'List Drafts', icon: FileText, category: 'Drafts' },
-    
+
     // Label Operations
     { value: 'get_labels', label: 'Get Labels', icon: Tag, category: 'Labels' },
     { value: 'create_label', label: 'Create Label', icon: Plus, category: 'Labels' },
     { value: 'delete_label', label: 'Delete Label', icon: Trash2, category: 'Labels' },
     { value: 'get_label', label: 'Get Label', icon: Eye, category: 'Labels' },
-    
+
     // Thread Operations
     { value: 'get_thread', label: 'Get Thread', icon: MessageSquare, category: 'Threads' },
     { value: 'list_threads', label: 'List Threads', icon: MessageSquare, category: 'Threads' },
@@ -137,9 +140,9 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
             console.log('🔐 Gmail Modal: No session token available');
             return;
         }
-        
+
         console.log('🔐 Gmail Modal: Checking authentication status...');
-        
+
         try {
             const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const response = await fetch(`${baseUrl}/api/v1/auth/tokens`, {
@@ -153,11 +156,11 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
             if (response.ok) {
                 const data = await response.json();
                 console.log('🔐 Gmail Modal: Auth tokens response:', data);
-                
+
                 const gmailToken = data.tokens?.find((token: any) => {
                     console.log('🔐 Gmail Modal: Checking token:', token);
-                    return token.connector_name === 'gmail_connector' && 
-                           token.token_type === 'oauth2';
+                    return token.connector_name === 'gmail_connector' &&
+                        token.token_type === 'oauth2';
                 });
 
                 if (gmailToken) {
@@ -231,26 +234,37 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
 
 
 
+    // Initialize configuration - reload every time modal opens with saved config
     useEffect(() => {
-        if (initialConfig) {
+        if (isOpen && initialConfig) {
+            console.log('🔄 Gmail Modal: Loading saved configuration:', initialConfig);
+
+            // Load general config
             setConfig(prev => ({ ...prev, ...initialConfig }));
+
+            // Load saved parameters into actionConfig
+            if (initialConfig.parameters) {
+                console.log('🔄 Gmail Modal: Loading saved parameters:', initialConfig.parameters);
+                setActionConfig(prev => ({ ...prev, ...initialConfig.parameters }));
+            }
+
             if (initialConfig.auth_config?.access_token) {
                 setAuthStatus('authenticated');
             }
         }
-    }, [initialConfig]);
+    }, [isOpen, initialConfig]);
 
     // Check authentication status when modal opens
     useEffect(() => {
         if (!isOpen) return;
-        
+
         console.log('🔐 Gmail Modal: Modal opened, checking auth status');
-        
+
         // Clean up any leftover OAuth data
         localStorage.removeItem('oauth_state');
         localStorage.removeItem('oauth_connector');
         localStorage.removeItem('oauth_tokens');
-        
+
         checkAuthStatus();
     }, [isOpen, session?.access_token]);
 
@@ -259,7 +273,7 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
         console.log('🤖 Gmail Modal: useEffect triggered with initialData:', initialData);
         if (initialData && Object.keys(initialData).length > 0) {
             console.log('🤖 Gmail Modal: Received AI-generated parameters:', initialData);
-            
+
             // Update actionConfig with AI-generated parameters
             setActionConfig(prev => {
                 const newConfig = {
@@ -322,7 +336,7 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 if (popup?.closed) {
                     clearInterval(checkClosed);
                     setIsLoading(false);
-                    
+
                     // Check authentication status after popup closes
                     setTimeout(() => {
                         console.log('🔐 Gmail Modal: OAuth popup closed, checking auth status');
@@ -476,13 +490,19 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 return (
                     <div className="space-y-4">
                         <div>
-                            <Label htmlFor="message_id">Message ID (Required)</Label>
-                            <Input
-                                id="message_id"
+                            <Label htmlFor="message_id">Gmail Message to Reply To (Required)</Label>
+                            <DynamicSelect
+                                connectorName="gmail_connector"
+                                fieldName="message_id"
                                 value={actionConfig.message_id}
-                                onChange={(e) => setActionConfig(prev => ({ ...prev, message_id: e.target.value }))}
-                                placeholder="Gmail message ID"
+                                onValueChange={(value) => setActionConfig(prev => ({ ...prev, message_id: value }))}
+                                placeholder="Select a Gmail message to reply to..."
+                                searchable={true}
+                                className="mt-1"
                             />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Select from your recent Gmail messages. Messages are fetched from your authenticated account.
+                            </p>
                         </div>
 
                         <div>
@@ -566,13 +586,19 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 return (
                     <div className="space-y-4">
                         <div>
-                            <Label htmlFor="message_id">Message ID (Required)</Label>
-                            <Input
-                                id="message_id"
+                            <Label htmlFor="message_id">Gmail Message (Required)</Label>
+                            <DynamicSelect
+                                connectorName="gmail_connector"
+                                fieldName="message_id"
                                 value={actionConfig.message_id}
-                                onChange={(e) => setActionConfig(prev => ({ ...prev, message_id: e.target.value }))}
-                                placeholder="Gmail message ID"
+                                onValueChange={(value) => setActionConfig(prev => ({ ...prev, message_id: value }))}
+                                placeholder="Select a Gmail message..."
+                                searchable={true}
+                                className="mt-1"
                             />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Select from your recent Gmail messages. Messages are fetched from your authenticated account.
+                            </p>
                         </div>
 
                         {action === 'read' && (
@@ -609,18 +635,21 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                         </div>
 
                         <div>
-                            <Label htmlFor="label_ids">Label IDs (Required)</Label>
-                            <Input
-                                id="label_ids"
-                                value={actionConfig.label_ids.join(', ')}
-                                onChange={(e) => setActionConfig(prev => ({
+                            <Label htmlFor="label_ids">Gmail Labels (Required)</Label>
+                            <DynamicSelect
+                                connectorName="gmail_connector"
+                                fieldName="label_ids"
+                                value={actionConfig.label_ids[0] || ''}
+                                onValueChange={(value) => setActionConfig(prev => ({
                                     ...prev,
-                                    label_ids: e.target.value.split(',').map(id => id.trim()).filter(Boolean)
+                                    label_ids: value ? [value] : []
                                 }))}
-                                placeholder="IMPORTANT, WORK, Label_123"
+                                placeholder="Select a Gmail label..."
+                                searchable={true}
+                                className="mt-1"
                             />
                             <p className="text-xs text-gray-500 mt-1">
-                                Comma-separated list of label IDs or names
+                                Select from your Gmail labels. Labels are fetched from your authenticated account.
                             </p>
                         </div>
                     </div>
@@ -665,13 +694,19 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 return (
                     <div className="space-y-4">
                         <div>
-                            <Label htmlFor="draft_id">Draft ID (Required)</Label>
-                            <Input
-                                id="draft_id"
+                            <Label htmlFor="draft_id">Gmail Draft (Required)</Label>
+                            <DynamicSelect
+                                connectorName="gmail_connector"
+                                fieldName="draft_id"
                                 value={actionConfig.draft_id}
-                                onChange={(e) => setActionConfig(prev => ({ ...prev, draft_id: e.target.value }))}
-                                placeholder="Gmail draft ID"
+                                onValueChange={(value) => setActionConfig(prev => ({ ...prev, draft_id: value }))}
+                                placeholder="Select a Gmail draft..."
+                                searchable={true}
+                                className="mt-1"
                             />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Select from your Gmail drafts. Drafts are fetched from your authenticated account.
+                            </p>
                         </div>
                     </div>
                 );
@@ -683,13 +718,19 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 return (
                     <div className="space-y-4">
                         <div>
-                            <Label htmlFor="thread_id">Thread ID (Required)</Label>
-                            <Input
-                                id="thread_id"
+                            <Label htmlFor="thread_id">Gmail Thread (Required)</Label>
+                            <DynamicSelect
+                                connectorName="gmail_connector"
+                                fieldName="thread_id"
                                 value={actionConfig.thread_id}
-                                onChange={(e) => setActionConfig(prev => ({ ...prev, thread_id: e.target.value }))}
-                                placeholder="Gmail thread ID"
+                                onValueChange={(value) => setActionConfig(prev => ({ ...prev, thread_id: value }))}
+                                placeholder="Select a Gmail thread..."
+                                searchable={true}
+                                className="mt-1"
                             />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Select from your Gmail conversation threads. Threads are fetched from your authenticated account.
+                            </p>
                         </div>
 
                         {action === 'get_thread' && (
@@ -816,7 +857,7 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                 </DialogHeader>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger value="action" className="flex items-center gap-2">
                             <Settings className="h-4 w-4" />
                             Action
@@ -825,10 +866,7 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                             <Key className="h-4 w-4" />
                             Authentication
                         </TabsTrigger>
-                        <TabsTrigger value="test" className="flex items-center gap-2">
-                            <TestTube className="h-4 w-4" />
-                            Test
-                        </TabsTrigger>
+
                     </TabsList>
 
                     <TabsContent value="action" className="space-y-6">
@@ -968,72 +1006,7 @@ const GmailConnectorModal: React.FC<GmailConnectorModalProps> = ({
                         </Card>
                     </TabsContent>
 
-                    <TabsContent value="test" className="space-y-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="text-lg">Test Gmail Connection</CardTitle>
-                                <CardDescription>
-                                    Verify that your Gmail connector is properly configured
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <Button
-                                    onClick={handleTestConnection}
-                                    disabled={isLoading || authStatus !== 'authenticated'}
-                                    className="w-full"
-                                >
-                                    {isLoading ? (
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    ) : (
-                                        <TestTube className="h-4 w-4 mr-2" />
-                                    )}
-                                    Test Connection
-                                </Button>
 
-                                {testResult && (
-                                    <Alert className={testResult.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
-                                        {testResult.success ? (
-                                            <CheckCircle className="h-4 w-4 text-green-600" />
-                                        ) : (
-                                            <XCircle className="h-4 w-4 text-red-600" />
-                                        )}
-                                        <AlertDescription className={testResult.success ? 'text-green-800' : 'text-red-800'}>
-                                            {testResult.message}
-                                        </AlertDescription>
-                                    </Alert>
-                                )}
-
-                                <div className="space-y-3">
-                                    <h4 className="font-medium">Connection Details</h4>
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <span className="text-gray-500">Connector:</span>
-                                            <span className="ml-2 font-medium">Gmail API v1</span>
-                                        </div>
-                                        <div>
-                                            <span className="text-gray-500">Authentication:</span>
-                                            <span className="ml-2 font-medium">
-                                                {authStatus === 'authenticated' ? 'OAuth 2.0' : 'Not configured'}
-                                            </span>
-                                        </div>
-                                        <div>
-                                            <span className="text-gray-500">Actions Available:</span>
-                                            <span className="ml-2 font-medium">{gmailActions.length} operations</span>
-                                        </div>
-                                        <div>
-                                            <span className="text-gray-500">Status:</span>
-                                            <Badge
-                                                variant={authStatus === 'authenticated' ? 'default' : 'secondary'}
-                                                className="ml-2"
-                                            >
-                                                {authStatus === 'authenticated' ? 'Ready' : 'Needs Setup'}
-                                            </Badge>
-                                        </div>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
                 </Tabs>
 
                 <div className="flex justify-end gap-3 pt-4 border-t">

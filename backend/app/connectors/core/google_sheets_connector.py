@@ -319,7 +319,7 @@ class GoogleSheetsConnector(BaseConnector):
             },
             oauth_scopes=[
                 "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive.file"
+                "https://www.googleapis.com/auth/drive.readonly"
             ],
             instructions="Google Sheets connector requires OAuth authentication with Google. "
                         "You'll need to authorize access to your Google Sheets."

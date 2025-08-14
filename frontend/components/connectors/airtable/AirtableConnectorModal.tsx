@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useAuth } from '@/lib/auth-context';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { DynamicSelect } from '@/components/ui/dynamic-select';
 import { Loader2, Database, Table, FileText, Settings, Key, TestTube, CheckCircle, XCircle, Info } from 'lucide-react';
 
 interface AirtableConnectorModalProps {
@@ -79,6 +81,7 @@ const OPERATION_OPTIONS = {
 };
 
 export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig, initialData }: AirtableConnectorModalProps) {
+  const { session } = useAuth();
   const [config, setConfig] = useState<AirtableConfig>({
     resource: 'record',
     operation: 'get',
@@ -97,25 +100,32 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
   const [isLoading, setIsLoading] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [apiKeySaved, setApiKeySaved] = useState(false);
 
   useEffect(() => {
     if (initialConfig) {
+      console.log('🔧 Airtable Modal: Loading saved configuration:', initialConfig);
       setConfig({ ...config, ...initialConfig });
     }
   }, [initialConfig]);
 
-  // Populate form with AI-generated parameters
+  // Populate form with AI-generated parameters only if no saved config exists
   useEffect(() => {
-    if (initialData && Object.keys(initialData).length > 0) {
-      console.log('🤖 Airtable Modal: Received AI-generated parameters:', initialData);
+    if (initialData && Object.keys(initialData).length > 0 && !initialConfig) {
+      // Redact sensitive data for logging
+      const safeData = { ...initialData };
+      if (safeData.api_token) {
+        safeData.api_token = '[REDACTED]';
+      }
+      console.log('🤖 Airtable Modal: Applying AI-generated parameters:', safeData);
       
-      // Update config with AI-generated data
+      // Update config with AI-generated data only if no saved config
       setConfig(prev => ({
         ...prev,
         ...initialData
       }));
     }
-  }, [initialData]);
+  }, [initialData, initialConfig]);
 
   const validateConfig = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -203,10 +213,21 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
         }] : undefined
       };
 
-      await onSave({
+      const saveConfig = {
         connector_name: 'airtable',
         settings: configToSave
+      };
+
+      console.log('💾 Saving full Airtable configuration:', { 
+        ...saveConfig, 
+        settings: { 
+          ...saveConfig.settings, 
+          api_token: saveConfig.settings.api_token ? '[REDACTED]' : undefined 
+        } 
       });
+
+      await onSave(saveConfig);
+      setApiKeySaved(true); // Mark as saved
       onClose();
     } catch (error) {
       console.error('Failed to save Airtable configuration:', error);
@@ -239,6 +260,60 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
       }
     } catch (error) {
       setTestResult({ success: false, message: 'Connection test failed. Please check your network connection.' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    if (!config.api_token) {
+      setTestResult({ success: false, message: 'API token is required for saving' });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (!session?.access_token) {
+        throw new Error('Authentication required. Please log in again.');
+      }
+
+      // Save the API key through the authentication token service
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/api/v1/auth/tokens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          connector_name: 'airtable',
+          token_type: 'api_key',
+          token_data: {
+            api_key: config.api_token
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save API key: ${response.status}`);
+      }
+
+      // Also save the configuration settings
+      const authConfig = {
+        connector_name: 'airtable',
+        settings: {
+          ...config, // Preserve all existing settings
+          api_token: config.api_token // Ensure API token is included
+        }
+      };
+
+      console.log('💾 Saving API key configuration:', { ...authConfig, settings: { ...authConfig.settings, api_token: '[REDACTED]' } });
+      await onSave(authConfig);
+      setApiKeySaved(true);
+      setTestResult({ success: true, message: 'API key saved successfully!' });
+    } catch (error) {
+      console.error('Failed to save API key:', error);
+      setTestResult({ success: false, message: 'Failed to save API key. Please try again.' });
     } finally {
       setIsLoading(false);
     }
@@ -282,10 +357,13 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
             </div>
             Configure Airtable Connector
           </DialogTitle>
+          <DialogDescription>
+            Configure your Airtable connector to manage bases, tables, and records with comprehensive database operations.
+          </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="configuration" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="configuration">Configuration</TabsTrigger>
             <TabsTrigger value="authentication">Authentication</TabsTrigger>
             <TabsTrigger value="advanced">Advanced</TabsTrigger>
@@ -364,16 +442,22 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                 {/* Base Configuration */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="base_id">Base ID *</Label>
-                    <Input
-                      id="base_id"
+                    <Label htmlFor="base_id">Airtable Base *</Label>
+                    <DynamicSelect
+                      connectorName="airtable"
+                      fieldName="base_id"
                       value={config.base_id || ''}
-                      onChange={(e) => {
-                        setConfig({ ...config, base_id: e.target.value });
+                      onValueChange={(value) => {
+                        setConfig({ ...config, base_id: value });
                         setErrors({ ...errors, base_id: '' });
                       }}
-                      placeholder="appXXXXXXXXXXXXXX"
+                      placeholder="Select an Airtable base..."
+                      searchable={true}
+                      className="mt-1"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Select from your Airtable bases. Bases are fetched from your authenticated account.
+                    </p>
                     {errors.base_id && <p className="text-sm text-red-500">{errors.base_id}</p>}
                   </div>
 
@@ -393,17 +477,25 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="table_id">
-                        Table ID or Name {isFieldRequired('table_id') && '*'}
+                        Airtable Table {isFieldRequired('table_id') && '*'}
                       </Label>
-                      <Input
-                        id="table_id"
+                      <DynamicSelect
+                        connectorName="airtable"
+                        fieldName="table_name"
                         value={config.table_id || ''}
-                        onChange={(e) => {
-                          setConfig({ ...config, table_id: e.target.value });
+                        onValueChange={(value) => {
+                          setConfig({ ...config, table_id: value });
                           setErrors({ ...errors, table_id: '' });
                         }}
-                        placeholder="tblXXXXXXXXXXXXXX or Table Name"
+                        placeholder="Select an Airtable table..."
+                        searchable={true}
+                        className="mt-1"
+                        context={{ base_id: config.base_id }}
+                        disabled={!config.base_id}
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Select a table from the chosen base. Available after selecting a base.
+                      </p>
                       {errors.table_id && <p className="text-sm text-red-500">{errors.table_id}</p>}
                     </div>
 
@@ -610,10 +702,17 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                     onChange={(e) => {
                       setConfig({ ...config, api_token: e.target.value });
                       setErrors({ ...errors, api_token: '' });
+                      setApiKeySaved(false); // Reset saved status when token changes
                     }}
                     placeholder="patXXXXXXXXXXXXXX.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
                   />
                   {errors.api_token && <p className="text-sm text-red-500">{errors.api_token}</p>}
+                  {apiKeySaved && (
+                    <div className="flex items-center gap-2 text-sm text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      API key saved successfully
+                    </div>
+                  )}
                 </div>
 
                 <Alert>
@@ -629,6 +728,11 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                       https://airtable.com/create/tokens
                     </a>
                     . Make sure to grant appropriate scopes for your bases and tables.
+                    {!apiKeySaved && (
+                      <div className="mt-2 text-sm">
+                        💡 <strong>Tip:</strong> Save your API key first to enable base and table selection in the Configuration tab.
+                      </div>
+                    )}
                   </AlertDescription>
                 </Alert>
 
@@ -646,6 +750,19 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                       <TestTube className="h-4 w-4" />
                     )}
                     Test Connection
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleSaveApiKey}
+                    disabled={isLoading || !config.api_token}
+                    className="flex items-center gap-2"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Key className="h-4 w-4" />
+                    )}
+                    Save API Key
                   </Button>
                 </div>
 
@@ -787,7 +904,7 @@ export function AirtableConnectorModal({ isOpen, onClose, onSave, initialConfig,
                 Saving...
               </>
             ) : (
-              'Save Configuration'
+              apiKeySaved ? 'Save Full Configuration' : 'Save Configuration'
             )}
           </Button>
         </div>

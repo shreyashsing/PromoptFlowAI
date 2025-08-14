@@ -352,8 +352,8 @@ async def initiate_oauth_impl(
 ):
     """Implementation of OAuth initiation logic."""
     try:
-        if request.connector_name in ["gmail_connector", "google_sheets"]:
-            # Google OAuth configuration (works for both Gmail and Sheets)
+        if request.connector_name in ["gmail_connector", "google_sheets", "google_drive", "youtube"]:
+            # Google OAuth configuration (works for Gmail, Sheets, Drive, and YouTube)
             client_id = settings.GMAIL_CLIENT_ID
             if not client_id:
                 raise HTTPException(
@@ -376,7 +376,18 @@ async def initiate_oauth_impl(
             elif request.connector_name == "google_sheets":
                 scopes = [
                     "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive.readonly"
+                ]
+            elif request.connector_name == "google_drive":
+                scopes = [
+                    "https://www.googleapis.com/auth/drive",
                     "https://www.googleapis.com/auth/drive.file"
+                ]
+            elif request.connector_name == "youtube":
+                scopes = [
+                    "https://www.googleapis.com/auth/youtube",
+                    "https://www.googleapis.com/auth/youtube.upload",
+                    "https://www.googleapis.com/auth/youtube.readonly"
                 ]
             
             auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
@@ -409,6 +420,38 @@ async def initiate_oauth_impl(
         )
 
 
+class OAuthDisconnectRequest(BaseModel):
+    connector_name: str
+
+
+@router.post("/oauth/disconnect")
+async def oauth_disconnect(
+    request: OAuthDisconnectRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Client = Depends(get_database)
+):
+    """Disconnect OAuth for a connector."""
+    try:
+        token_service = await get_auth_token_service(db)
+        user_id = current_user["user_id"]
+        
+        # Deactivate OAuth tokens for this connector
+        success = await token_service.deactivate_token(user_id, request.connector_name, AuthType.OAUTH2)
+        
+        if not success:
+            # Even if no token was found, we consider it a successful disconnect
+            logger.info(f"No OAuth token found for connector {request.connector_name} and user {user_id}")
+        
+        return {"message": "OAuth disconnected successfully", "connector_name": request.connector_name}
+        
+    except Exception as e:
+        logger.error(f"Failed to disconnect OAuth for {request.connector_name}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to disconnect OAuth: {str(e)}"
+        )
+
+
 @router.post("/oauth/callback")
 async def oauth_callback(
     request: OAuthCallbackRequest,
@@ -417,8 +460,8 @@ async def oauth_callback(
 ):
     """Handle OAuth callback and exchange code for tokens."""
     try:
-        if request.connector_name in ["gmail_connector", "google_sheets"]:
-            # Google OAuth token exchange (works for both Gmail and Sheets)
+        if request.connector_name in ["gmail_connector", "google_sheets", "google_drive", "youtube"]:
+            # Google OAuth token exchange (works for Gmail, Sheets, Drive, and YouTube)
             client_id = settings.GMAIL_CLIENT_ID
             client_secret = settings.GMAIL_CLIENT_SECRET
             
@@ -532,6 +575,25 @@ async def test_connector_connection(
             from app.connectors.core.gmail_connector import GmailConnector
             
             connector = GmailConnector()
+            auth_tokens = oauth_token["token_data"]
+            
+            # Test the connection
+            is_connected = await connector.test_connection(auth_tokens)
+            
+            if is_connected:
+                return {
+                    "success": True,
+                    "message": f"{connector_name} connection successful!"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"{connector_name} connection failed. Please re-authenticate."
+                }
+        elif connector_name == "google_drive":
+            from app.connectors.core.google_drive_connector import GoogleDriveConnector
+            
+            connector = GoogleDriveConnector()
             auth_tokens = oauth_token["token_data"]
             
             # Test the connection
