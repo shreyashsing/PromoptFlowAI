@@ -192,9 +192,9 @@ class CodeConnector(BaseConnector):
             if context and "previous_results" in context:
                 previous_data = context["previous_results"].get("items", [])
             
-            # Generate AI code
+            # Generate AI code using professional templates
             ai_generator = await get_ai_code_generator()
-            code_result = await ai_generator.generate_code(
+            code_result = await ai_generator.generate_professional_code(
                 user_prompt=user_prompt,
                 language=suggestions.get("language", "javascript"),
                 mode=suggestions.get("mode", "runOnceForAllItems"),

@@ -289,23 +289,39 @@ class TrueReActAgent:
         
         # Check if the request has clear actionable intent even without explicit tools
         clear_action_patterns = [
-            r'\bmonitor\b.*\bwebsites?\b',
-            r'\btrack\b.*\bchanges?\b',
-            r'\bwatch\b.*\bfor\b',
-            r'\bnotify\b.*\bwhen\b',
-            r'\bsummarize\b.*\bemail',
-            r'\bsync\b.*\bdata\b',
-            r'\bbackup\b.*\bfiles?\b',
-            r'\bgenerate\b.*\breports?\b',
-            r'\bbuild\b.*\bautomation\b',
-            r'\bsend\b.*\b(message|email)\b.*@',
-            r'\bprocess\b.*\bdata\b',
-            r'\bdata\s+processing\b',
-            r'\bfind\b.*\bblog.*\band\s+send\b',
-            r'\bsearch\b.*\band\s+email\b',
-            r'\bget\b.*\band\s+send\s+to\b',
-            r'\bfind\b.*\btop\s+\d+\b.*\band\s+send\b',
-            r'\bsearch\b.*\btop\s+\d+\b.*\band\s+email\b'
+            # Traditional workflow patterns
+            # r'\bmonitor\b.*\bwebsites?\b',
+            # r'\btrack\b.*\bchanges?\b',
+            # r'\bwatch\b.*\bfor\b',
+            # r'\bnotify\b.*\bwhen\b',
+            # r'\bsummarize\b.*\bemail',
+            # r'\bsync\b.*\bdata\b',
+            # r'\bbackup\b.*\bfiles?\b',
+            # r'\bgenerate\b.*\breports?\b',
+            # r'\bbuild\b.*\bautomation\b',
+            # r'\bsend\b.*\b(message|email)\b.*@',
+            # r'\bprocess\b.*\bdata\b',
+            # r'\bdata\s+processing\b',
+            # r'\bfind\b.*\bblog.*\band\s+send\b',
+            # r'\bsearch\b.*\band\s+email\b',
+            # r'\bget\b.*\band\s+send\s+to\b',
+            # r'\bfind\b.*\btop\s+\d+\b.*\band\s+send\b',
+            # r'\bsearch\b.*\btop\s+\d+\b.*\band\s+email\b',
+            # # Agent/AI assistant patterns
+            # r'\byou\s+are\b.*\bai\b',
+            # r'\byou\s+are\b.*\bassistant\b',
+            # r'\byou\s+are\b.*\bagent\b',
+            # r'\bintelligent\b.*\bassistant\b',
+            # r'\bresearch\b.*\bassistant\b',
+            # r'\bcapabilities\b.*:',
+            # r'\bunderstand\s+content\b',
+            # r'\bcite\b.*\bwrite\b',
+            # r'\bresearch\s+tools\b',
+            # r'\busability\s+features\b',
+            # r'\bresponse\s+behavior\b',
+            # r'\blimitations\b.*:',
+            # r'\bworld-class\b.*\bassistant\b',
+            # r'\btrusted\s+by\b.*\bresearchers\b'
         ]
         
         has_clear_action = any(re.search(pattern, request.lower()) for pattern in clear_action_patterns)
@@ -314,13 +330,24 @@ class TrueReActAgent:
         email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
         has_email = bool(re.search(email_pattern, request))
         
-        # If request has clear action pattern or email, it's likely valid
-        if has_clear_action or has_email:
+        # Check for detailed agent specifications (long, structured requests)
+        is_detailed_spec = len(request) > 500 and any([
+            "capabilities" in request.lower(),
+            "features" in request.lower(),
+            "behavior" in request.lower(),
+            "limitations" in request.lower(),
+            request.count('\n') > 5,  # Multi-line structured request
+            request.count(':') > 3    # Structured with colons (like specifications)
+        ])
+        
+        # If request has clear action pattern, email, or is a detailed specification, it's likely valid
+        if has_clear_action or has_email or is_detailed_spec:
             return {
                 "is_valid": True,
-                "reason": "Request contains clear action patterns or specific destinations",
+                "reason": "Request contains clear action patterns, specific destinations, or detailed specifications",
                 "has_clear_action": has_clear_action,
-                "has_email": has_email
+                "has_email": has_email,
+                "is_detailed_spec": is_detailed_spec
             }
         
         if not mentioned_tools and not action_words and not has_clear_action:
@@ -3292,7 +3319,8 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             parameter_modifications = await self._ai_modify_parameters(
                 target_step, 
                 reason, 
-                workflow
+                workflow,
+                change
             )
             
             if parameter_modifications:
@@ -3341,7 +3369,7 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
                 "error": str(e)
             }
     
-    async def _ai_modify_parameters(self, step: Dict[str, Any], reason: str, workflow: Dict[str, Any]) -> Dict[str, Any]:
+    async def _ai_modify_parameters(self, step: Dict[str, Any], reason: str, workflow: Dict[str, Any], change_data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Use AI to intelligently modify connector parameters based on user feedback.
         """
@@ -3351,13 +3379,42 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             
             logger.info(f"🤖 Using AI to modify parameters for {connector_name}")
             
+            # If we have specific change data with parameter details, use it directly
+            if change_data and change_data.get("type") == "parameter_change":
+                parameter_name = change_data.get("parameter")
+                new_value = change_data.get("new_value")
+                old_value = change_data.get("old_value")
+                
+                # Only use direct replacement if we have a specific new value
+                if parameter_name and new_value is not None and new_value != "":
+                    logger.info(f"🎯 Direct parameter change: {parameter_name} = {new_value}")
+                    return {parameter_name: new_value}
+                
+                # If no specific new value, enhance the AI prompt with change context
+                if parameter_name and change_data.get("reason"):
+                    logger.info(f"🧠 AI reasoning needed for parameter: {parameter_name}")
+                    # Continue to AI reasoning with enhanced context
+            
             # Create AI prompt for parameter modification
+            change_context = ""
+            if change_data and change_data.get("type") == "parameter_change":
+                parameter_name = change_data.get("parameter")
+                old_value = change_data.get("old_value")
+                change_context = f"""
+            SPECIFIC PARAMETER TO MODIFY: {parameter_name}
+            CURRENT VALUE: {json.dumps(old_value)}
+            MODIFICATION REQUEST: {reason}
+            
+            Focus on improving/modifying the '{parameter_name}' parameter based on the user's request.
+            """
+            
             parameter_prompt = f"""
             CONNECTOR PARAMETER MODIFICATION REQUEST:
             
             CONNECTOR: {connector_name}
             CURRENT PARAMETERS: {json.dumps(current_parameters, indent=2)}
             USER ISSUE/REQUEST: "{reason}"
+            {change_context}
             
             FULL WORKFLOW CONTEXT:
             {json.dumps(workflow, indent=2)}
@@ -3365,6 +3422,10 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             TASK: Analyze the user's issue and suggest specific parameter modifications to resolve it.
             
             COMMON ISSUES AND SOLUTIONS:
+            - "make more professional" → improve language, add proper formatting, include relevant details
+            - "add error handling" → include try-catch blocks, validation, proper error messages
+            - "make more robust" → add logging, validation, fallback mechanisms
+            - "improve formatting" → enhance structure, add headers, proper data types
             - "cannot see email body" → ensure html_body is properly formatted, add plain_text fallback
             - "data not showing" → check data formatting, add proper encoding
             - "connection failed" → verify authentication parameters, add retry logic
@@ -3519,6 +3580,13 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
         try:
             connector_name = change.get("new_connector")
             task_number = change.get("task_number", 1)
+            
+            # Convert task_number to integer if it's a float (e.g., 3.5 -> 4)
+            if isinstance(task_number, float):
+                task_number = int(task_number) + 1 if task_number % 1 != 0 else int(task_number)
+            elif not isinstance(task_number, int):
+                task_number = int(task_number) if task_number else 1
+                
             reason = change.get("reason", "User requested task addition")
             
             if not connector_name:
@@ -3598,18 +3666,17 @@ Return ONLY the corrected JavaScript code (no explanations, no markdown):
             # Insert the step at the specified position
             steps = workflow.get("steps", [])
             
-            # Adjust task numbers for existing steps
-            for step in steps:
-                if step.get("task_number", 0) >= task_number:
-                    step["task_number"] = step.get("task_number", 0) + 1
+            # Determine insertion position (0-based index)
+            insert_position = max(0, min(task_number - 1, len(steps)))
             
-            # Insert the new step
-            if task_number <= 1:
-                steps.insert(0, new_step)
-            elif task_number > len(steps):
-                steps.append(new_step)
-            else:
-                steps.insert(task_number - 1, new_step)
+            # Adjust task numbers for existing steps that come after the insertion point
+            for step in steps:
+                current_task_num = step.get("task_number", 0)
+                if current_task_num >= task_number:
+                    step["task_number"] = current_task_num + 1
+            
+            # Insert the new step at the calculated position
+            steps.insert(insert_position, new_step)
             
             workflow["steps"] = steps
             workflow["total_steps"] = len(steps)

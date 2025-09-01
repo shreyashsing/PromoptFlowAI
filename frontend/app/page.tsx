@@ -1,6 +1,6 @@
 'use client'
 
-import TrueReActWorkflowBuilder from '@/components/TrueReActWorkflowBuilder'
+import TrueReActWorkflowBuilder from '@/components/WorkFlowBuilder'
 import { ProtectedRoute } from '../components/auth/ProtectedRoute'
 import { UserMenu } from '../components/auth/UserMenu'
 import { Badge } from '../components/ui/badge'

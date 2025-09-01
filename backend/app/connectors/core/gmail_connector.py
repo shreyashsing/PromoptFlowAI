@@ -197,7 +197,8 @@ class GmailConnector(BaseConnector):
                 "label_color": {
                     "type": "string",
                     "description": "Color for label creation",
-                    "enum": ["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "brown", "gray"]
+                    "enum": ["", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "brown", "gray"],
+                    "default": ""
                 },
                 # Thread operations
                 "thread_id": {

@@ -1216,7 +1216,7 @@ class UnifiedWorkflowOrchestrator:
                 ]
             }
             
-            await supabase.table("workflow_executions").insert(result_data).execute()
+            supabase.table("workflow_executions").insert(result_data).execute()
             logger.info(f"💾 Stored unified execution result: {execution_result.execution_id}")
             
         except Exception as e:

@@ -8,7 +8,7 @@ import httpx
 from app.connectors.base import BaseConnector
 from app.models.connector import ConnectorResult, ConnectorExecutionContext, AuthRequirements
 from app.models.base import AuthType
-from app.core.exceptions import ConnectorException, AuthenticationException
+from app.core.exceptions import ConnectorException, AuthenticationException, ValidationException
 
 
 class PerplexityConnector(BaseConnector):
@@ -106,8 +106,8 @@ class PerplexityConnector(BaseConnector):
                     "description": "Question or search query for Perplexity AI"
                 },
                 "messages": {
-                    "type": "array",
-                    "description": "Conversation messages for chat completion",
+                    "type": ["array", "string"],
+                    "description": "Conversation messages for chat completion (array or JSON string)",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -121,7 +121,15 @@ class PerplexityConnector(BaseConnector):
                 "model": {
                     "type": "string",
                     "description": "Perplexity model to use",
-                    "enum": ["sonar"],
+                    "enum": [
+                        "sonar",
+                        "llama-3.1-sonar-small-128k-online",
+                        "llama-3.1-sonar-large-128k-online",
+                        "llama-3.1-sonar-huge-128k-online",
+                        "llama-3.1-sonar-small-128k-chat",
+                        "llama-3.1-sonar-large-128k-chat",
+                        "llama-3.1-sonar-huge-128k-chat"
+                    ],
                     "default": "sonar"
                 },
                 # Generation parameters
@@ -184,8 +192,8 @@ class PerplexityConnector(BaseConnector):
                     "default": False
                 },
                 "search_domain_filter": {
-                    "type": "array",
-                    "description": "Domains to include/exclude in search",
+                    "type": ["array", "string"],
+                    "description": "Domains to include/exclude in search (array or comma-separated string)",
                     "items": {"type": "string"}
                 },
                 "search_recency_filter": {
@@ -220,6 +228,12 @@ class PerplexityConnector(BaseConnector):
                 "system_prompt": {
                     "type": "string",
                     "description": "System prompt to guide the AI's behavior"
+                },
+                # Streaming parameter (ignored but allowed for compatibility)
+                "stream": {
+                    "type": "boolean",
+                    "description": "Enable streaming response (not supported, parameter ignored)",
+                    "default": False
                 }
             },
             "required": ["action"],
@@ -274,6 +288,74 @@ class PerplexityConnector(BaseConnector):
         logger.info(f"Model {model} mapped to {mapped_model}")
         return mapped_model
 
+    async def validate_params(self, params: Dict[str, Any]) -> bool:
+        """
+        Validate input parameters with normalization for array parameters.
+        
+        Args:
+            params: Parameters to validate
+            
+        Returns:
+            True if parameters are valid
+            
+        Raises:
+            ValidationException: If parameters are invalid
+        """
+        # Normalize array parameters before validation
+        normalized_params = self._normalize_array_parameters(params)
+        
+        # Use the parent validation with normalized parameters
+        return await super().validate_params(normalized_params)
+
+    def _normalize_array_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize parameters that can be either strings or arrays.
+        
+        Args:
+            params: Raw parameters
+            
+        Returns:
+            Normalized parameters with proper array formats
+        """
+        normalized = params.copy()
+        
+        # Convert search_domain_filter from string to array if needed
+        if "search_domain_filter" in normalized:
+            domain_filter = normalized["search_domain_filter"]
+            if isinstance(domain_filter, str):
+                if domain_filter.strip():
+                    # Split by comma and clean up whitespace
+                    normalized["search_domain_filter"] = [
+                        domain.strip() for domain in domain_filter.split(",") 
+                        if domain.strip()
+                    ]
+                else:
+                    # Empty string becomes empty array
+                    normalized["search_domain_filter"] = []
+        
+        # Convert messages from string to array if needed
+        if "messages" in normalized:
+            messages = normalized["messages"]
+            if isinstance(messages, str):
+                if messages.strip():
+                    # Try to parse as JSON array
+                    try:
+                        import json
+                        parsed_messages = json.loads(messages)
+                        if isinstance(parsed_messages, list):
+                            normalized["messages"] = parsed_messages
+                        else:
+                            # If it's not a list, create a simple user message
+                            normalized["messages"] = [{"role": "user", "content": messages}]
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails, create a simple user message
+                        normalized["messages"] = [{"role": "user", "content": messages}]
+                else:
+                    # Empty string becomes empty array
+                    normalized["messages"] = []
+        
+        return normalized
+
     async def execute(self, params: Dict[str, Any], context: ConnectorExecutionContext) -> ConnectorResult:
         """
         Execute Perplexity AI operation with the provided parameters.
@@ -291,6 +373,9 @@ class PerplexityConnector(BaseConnector):
             
             if not api_key:
                 raise AuthenticationException("Perplexity AI API key not found")
+            
+            # Normalize array parameters
+            params = self._normalize_array_parameters(params)
             
             # Validate and fix model parameter
             original_model = params.get("model", "sonar")

@@ -34,6 +34,43 @@ class AICodeGenerator:
         else:
             logger.warning("Azure OpenAI not configured - AI code generation disabled")
     
+    async def generate_professional_code(
+        self,
+        user_prompt: str,
+        language: str = "javascript",
+        mode: str = "runOnceForAllItems",
+        context: Optional[Dict[str, Any]] = None,
+        previous_data: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate professional-grade code similar to Pipedream/Zapier quality.
+        """
+        if not self._client:
+            return self._generate_professional_fallback(user_prompt, language, mode)
+        
+        try:
+            # Analyze the prompt for professional code generation
+            intent = await self._analyze_professional_intent(user_prompt, context, previous_data)
+            
+            # Generate professional code structure
+            code = await self._generate_professional_code_structure(
+                user_prompt, language, mode, intent, previous_data
+            )
+            
+            return {
+                "code": code,
+                "language": language,
+                "mode": mode,
+                "intent": intent,
+                "confidence": 0.95,  # High confidence for professional templates
+                "explanation": await self._generate_professional_explanation(code, intent),
+                "style": "professional"
+            }
+            
+        except Exception as e:
+            logger.error(f"Professional code generation failed: {str(e)}")
+            return self._generate_professional_fallback(user_prompt, language, mode)
+
     async def generate_code(
         self, 
         user_prompt: str, 
@@ -155,13 +192,19 @@ Provide analysis in JSON format.
             
         except Exception as e:
             logger.error(f"AI code generation failed: {str(e)}")
-            return self._fallback_code_templates(prompt, language, mode)
+            return self._get_code_templates(language, mode).get("basic", "")
     
     def _build_system_prompt(self, language: str, mode: str, intent: Dict[str, Any]) -> str:
         """Build context-aware system prompt for code generation."""
         
         base_prompt = f"""
 You are an expert {language.title()} developer specializing in data processing workflows.
+
+CRITICAL EXECUTION REQUIREMENTS:
+- Your code will be executed in a sandboxed environment
+- The code must be syntactically perfect and executable
+- Always include proper error handling and null checks
+- Test your logic mentally before generating
 
 EXECUTION MODE: {mode}
 - If "runOnceForAllItems": Process the entire 'items' array at once
@@ -172,38 +215,98 @@ LANGUAGE SPECIFICS:
         
         if language == "javascript":
             base_prompt += """
-- Use modern ES6+ JavaScript syntax
+- Use modern ES6+ JavaScript syntax with professional structure
 - Access data via 'items' array (all items mode) or 'item' object (each item mode)
-- Use console.log() for debugging output
-- Return the result directly (no explicit return statement needed in function wrapper)
+- Use console.log() for debugging output and progress tracking
+- ALWAYS return a value - the last expression will be the result
 - For all items mode: return an array of objects with 'json' property
 - For each item mode: return a single object with 'json' property
 - Use array methods like map(), filter(), reduce() for data processing
-- Handle edge cases (null, undefined, empty arrays)
+- Handle edge cases gracefully with proper validation
+- Include helpful comments explaining the logic
+- Structure code like professional platforms (Pipedream, Zapier, etc.)
 
-EXAMPLES:
-All items mode:
+PROFESSIONAL CODE STRUCTURE:
+All items mode - Clean, robust processing:
 ```javascript
-// Transform all items
-return items.map(item => ({
-  json: {
-    ...item.json,
-    processed: true,
-    timestamp: new Date().toISOString()
+// Validate input data
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+console.log(`Processing ${items.length} items...`);
+
+// Process all items with error handling
+return items.map((item, index) => {
+  try {
+    // Extract data safely
+    const data = item.json || {};
+    
+    // Your processing logic here
+    const processedData = {
+      ...data,
+      processed: true,
+      processedAt: new Date().toISOString(),
+      itemIndex: index
+    };
+    
+    console.log(`Processed item ${index + 1}/${items.length}`);
+    
+    return {
+      json: processedData
+    };
+  } catch (error) {
+    console.log(`Error processing item ${index + 1}: ${error.message}`);
+    return {
+      json: {
+        error: error.message,
+        originalData: item.json || {},
+        itemIndex: index
+      }
+    };
   }
-}));
+});
 ```
 
-Each item mode:
+Each item mode - Professional single item processing:
 ```javascript
-// Process single item
-return {
-  json: {
-    ...item.json,
+// Validate input item
+if (!item || typeof item !== 'object') {
+  console.log('Warning: Invalid item provided');
+  return {
+    json: {
+      error: 'Invalid input item',
+      received: typeof item
+    }
+  };
+}
+
+const data = item.json || {};
+console.log('Processing item:', Object.keys(data));
+
+try {
+  // Your processing logic here
+  const result = {
+    ...data,
     processed: true,
-    category: item.json.age >= 18 ? 'adult' : 'minor'
-  }
-};
+    processedAt: new Date().toISOString()
+  };
+  
+  console.log('Item processed successfully');
+  
+  return {
+    json: result
+  };
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      originalData: data
+    }
+  };
+}
 ```
 """
         else:  # Python
@@ -301,19 +404,51 @@ Generate ONLY the code, no explanations or markdown formatting.
     def _enhance_javascript_code(self, code: str, mode: str) -> str:
         """Add safety checks and optimizations to JavaScript code."""
         
-        # Add null/undefined checks if not present
-        if mode == "runOnceForAllItems" and "items" in code and "Array.isArray" not in code:
-            safety_check = "// Safety check for items array\nif (!Array.isArray(items)) items = [];\n\n"
+        # Check if code already has proper safety checks
+        has_array_check = "Array.isArray" in code or "!Array.isArray" in code
+        has_item_check = "!item" in code or "item &&" in code
+        has_try_catch = "try {" in code or "try{" in code
+        
+        # Add safety checks based on mode
+        if mode == "runOnceForAllItems" and not has_array_check:
+            safety_check = """// Safety check for items array
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+"""
+            code = safety_check + code
+        elif mode == "runOnceForEachItem" and not has_item_check:
+            safety_check = """// Safety check for item
+if (!item || !item.json) {
+  console.log('Warning: item or item.json is missing');
+  return {
+    json: {
+      error: 'Invalid input item'
+    }
+  };
+}
+
+"""
             code = safety_check + code
         
-        # Add error handling wrapper if complex operations detected
-        if any(keyword in code for keyword in ["JSON.parse", "parseInt", "parseFloat", "new Date"]):
+        # Add error handling wrapper if not present and complex operations detected
+        if not has_try_catch and any(keyword in code for keyword in ["JSON.parse", "parseInt", "parseFloat", "new Date", ".map(", ".filter(", ".reduce("]):
+            fallback_return = "[]" if mode == "runOnceForAllItems" else "{ json: { error: 'Code execution failed' } }"
             code = f"""try {{
 {self._indent_code(code, 2)}
 }} catch (error) {{
   console.log('Error in code execution:', error.message);
-  return {mode == 'runOnceForAllItems' and '[]' or 'null'};
+  return {fallback_return};
 }}"""
+        
+        # Ensure code ends with return statement if it doesn't already
+        if not re.search(r'\breturn\b', code):
+            if mode == "runOnceForAllItems":
+                code += "\n\n// Fallback return\nreturn [];"
+            else:
+                code += "\n\n// Fallback return\nreturn { json: {} };"
         
         return code
     
@@ -387,7 +522,7 @@ Generate ONLY the code, no explanations or markdown formatting.
         else:
             template_key = "basic"
         
-        code = templates.get(template_key, templates["basic"])
+        code = templates.get(template_key, templates.get("basic", "// No template available"))
         
         return {
             "code": code,
@@ -404,71 +539,209 @@ Generate ONLY the code, no explanations or markdown formatting.
         if language == "javascript":
             if mode == "runOnceForAllItems":
                 return {
-                    "basic": """// Process all items
-return items.map(item => ({
-  json: {
-    ...item.json,
-    processed: true
+                    "basic": """// Process all items with safety checks
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+return items.map(item => {
+  try {
+    return {
+      json: {
+        ...item.json,
+        processed: true
+      }
+    };
+  } catch (error) {
+    console.log('Error processing item:', error.message);
+    return {
+      json: {
+        error: error.message,
+        original: item.json || {}
+      }
+    };
   }
-}));""",
-                    "transform": """// Transform all items
-return items.map(item => ({
-  json: {
-    ...item.json,
-    processed: true,
-    timestamp: new Date().toISOString()
-  }
-}));""",
-                    "filter": """// Filter items based on condition
-return items.filter(item => {
-  // Add your condition here
-  return item.json.status === 'active';
 });""",
-                    "aggregate": """// Aggregate data
-const total = items.reduce((sum, item) => sum + (item.json.value || 0), 0);
-return [{
-  json: {
-    total: total,
-    count: items.length,
-    average: total / items.length
+                    "transform": """// Transform all items with safety checks
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+return items.map(item => {
+  try {
+    return {
+      json: {
+        ...item.json,
+        processed: true,
+        timestamp: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    console.log('Error processing item:', error.message);
+    return {
+      json: {
+        error: error.message,
+        original: item.json || {}
+      }
+    };
   }
-}];"""
+});""",
+                    "filter": """// Filter items based on condition with safety checks
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+return items.filter(item => {
+  try {
+    // Add your condition here
+    return item.json && item.json.status === 'active';
+  } catch (error) {
+    console.log('Error filtering item:', error.message);
+    return false;
+  }
+});""",
+                    "aggregate": """// Aggregate data with safety checks
+if (!Array.isArray(items)) {
+  console.log('Warning: items is not an array, converting to empty array');
+  items = [];
+}
+
+try {
+  const total = items.reduce((sum, item) => {
+    const value = item.json && typeof item.json.value === 'number' ? item.json.value : 0;
+    return sum + value;
+  }, 0);
+  
+  return [{
+    json: {
+      total: total,
+      count: items.length,
+      average: items.length > 0 ? total / items.length : 0
+    }
+  }];
+} catch (error) {
+  console.log('Error aggregating data:', error.message);
+  return [{
+    json: {
+      error: error.message,
+      total: 0,
+      count: 0,
+      average: 0
+    }
+  }];
+}"""
                 }
             else:  # runOnceForEachItem
                 return {
-                    "basic": """// Process single item
-return {
-  json: {
-    ...item.json,
-    processed: true
-  }
-};""",
-                    "transform": """// Transform single item
-return {
-  json: {
-    ...item.json,
-    processed: true,
-    timestamp: new Date().toISOString()
-  }
-};""",
-                    "filter": """// Process item conditionally
-if (item.json.status === 'active') {
+                    "basic": """// Process single item with safety checks
+if (!item || !item.json) {
+  console.log('Warning: item or item.json is missing');
+  return {
+    json: {
+      error: 'Invalid input item'
+    }
+  };
+}
+
+try {
   return {
     json: {
       ...item.json,
       processed: true
     }
   };
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      original: item.json || {}
+    }
+  };
+}""",
+                    "transform": """// Transform single item with safety checks
+if (!item || !item.json) {
+  console.log('Warning: item or item.json is missing');
+  return {
+    json: {
+      error: 'Invalid input item'
+    }
+  };
 }
-return null;""",
-                    "aggregate": """// Process single item
-return {
-  json: {
-    ...item.json,
-    processed: true,
-    value_doubled: (item.json.value || 0) * 2
+
+try {
+  return {
+    json: {
+      ...item.json,
+      processed: true,
+      timestamp: new Date().toISOString()
+    }
+  };
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      original: item.json || {}
+    }
+  };
+}""",
+                    "filter": """// Process item conditionally with safety checks
+if (!item || !item.json) {
+  console.log('Warning: item or item.json is missing');
+  return null;
+}
+
+try {
+  if (item.json.status === 'active') {
+    return {
+      json: {
+        ...item.json,
+        processed: true
+      }
+    };
   }
-};"""
+  return null;
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      original: item.json || {}
+    }
+  };
+}""",
+                    "aggregate": """// Process single item with safety checks
+if (!item || !item.json) {
+  console.log('Warning: item or item.json is missing');
+  return {
+    json: {
+      error: 'Invalid input item'
+    }
+  };
+}
+
+try {
+  const value = typeof item.json.value === 'number' ? item.json.value : 0;
+  return {
+    json: {
+      ...item.json,
+      processed: true,
+      value_doubled: value * 2
+    }
+  };
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      original: item.json || {}
+    }
+  };
+}"""
                 }
         else:  # Python
             if mode == "runOnceForAllItems":
@@ -573,6 +846,484 @@ result = {
             "data_type": "object_manipulation",
             "confidence": 0.6
         }
+
+    async def _analyze_professional_intent(
+        self, 
+        prompt: str, 
+        context: Optional[Dict[str, Any]], 
+        previous_data: Optional[List[Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        """Analyze intent for professional code generation."""
+        
+        # Enhanced intent analysis for professional code
+        prompt_lower = prompt.lower()
+        
+        # Detect data operations
+        operations = []
+        if any(word in prompt_lower for word in ["extract", "parse", "get", "retrieve"]):
+            operations.append("extract")
+        if any(word in prompt_lower for word in ["transform", "convert", "format", "clean"]):
+            operations.append("transform")
+        if any(word in prompt_lower for word in ["filter", "select", "where", "condition"]):
+            operations.append("filter")
+        if any(word in prompt_lower for word in ["validate", "check", "verify", "ensure"]):
+            operations.append("validate")
+        if any(word in prompt_lower for word in ["aggregate", "sum", "count", "calculate"]):
+            operations.append("aggregate")
+        
+        # Detect data types
+        data_types = []
+        if any(word in prompt_lower for word in ["title", "content", "text", "string"]):
+            data_types.append("text")
+        if any(word in prompt_lower for word in ["number", "count", "value", "amount"]):
+            data_types.append("numeric")
+        if any(word in prompt_lower for word in ["date", "time", "timestamp"]):
+            data_types.append("temporal")
+        if any(word in prompt_lower for word in ["array", "list", "collection"]):
+            data_types.append("array")
+        if any(word in prompt_lower for word in ["object", "json", "structure"]):
+            data_types.append("object")
+        
+        # Analyze previous data structure if available
+        data_structure = {}
+        if previous_data and len(previous_data) > 0:
+            sample = previous_data[0].get("json", {})
+            data_structure = {
+                "fields": list(sample.keys()),
+                "sample_values": {k: type(v).__name__ for k, v in sample.items()}
+            }
+        
+        return {
+            "operations": operations or ["process"],
+            "data_types": data_types or ["object"],
+            "complexity": "professional",
+            "data_structure": data_structure,
+            "confidence": 0.9
+        }
+
+    async def _generate_professional_code_structure(
+        self,
+        prompt: str,
+        language: str,
+        mode: str,
+        intent: Dict[str, Any],
+        previous_data: Optional[List[Dict[str, Any]]]
+    ) -> str:
+        """Generate professional code structure."""
+        
+        if language == "javascript":
+            return self._generate_professional_javascript(prompt, mode, intent, previous_data)
+        else:
+            return self._generate_professional_python(prompt, mode, intent, previous_data)
+
+    def _generate_professional_javascript(
+        self,
+        prompt: str,
+        mode: str,
+        intent: Dict[str, Any],
+        previous_data: Optional[List[Dict[str, Any]]]
+    ) -> str:
+        """Generate professional JavaScript code."""
+        
+        operations = intent.get("operations", ["process"])
+        data_structure = intent.get("data_structure", {})
+        
+        if mode == "runOnceForAllItems":
+            return f"""// {prompt}
+// Professional data processing with comprehensive error handling
+
+// Validate and prepare input data
+if (!Array.isArray(items)) {{
+  console.log('Warning: Expected array of items, received:', typeof items);
+  items = [];
+}}
+
+console.log(`Starting processing of ${{items.length}} items...`);
+
+// Process all items with detailed logging and error handling
+const results = items.map((item, index) => {{
+  try {{
+    // Validate item structure
+    if (!item || typeof item !== 'object' || !item.json) {{
+      console.log(`Warning: Invalid item structure at index ${{index}}`);
+      return {{
+        json: {{
+          error: 'Invalid item structure',
+          itemIndex: index,
+          received: typeof item
+        }}
+      }};
+    }}
+    
+    const data = item.json;
+    console.log(`Processing item ${{index + 1}}/${{items.length}}:`, Object.keys(data));
+    
+    // Main processing logic
+    {self._generate_processing_logic(operations, data_structure)}
+    
+    console.log(`Successfully processed item ${{index + 1}}`);
+    
+    return {{
+      json: processedData
+    }};
+    
+  }} catch (error) {{
+    console.log(`Error processing item ${{index + 1}}: ${{error.message}}`);
+    return {{
+      json: {{
+        error: error.message,
+        itemIndex: index,
+        originalData: item.json || {{}},
+        stack: error.stack
+      }}
+    }};
+  }}
+}});
+
+console.log(`Processing complete. Successfully processed ${{results.filter(r => !r.json.error).length}}/${{items.length}} items`);
+
+return results;"""
+        else:  # runOnceForEachItem
+            return f"""// {prompt}
+// Professional single item processing
+
+// Validate input item
+if (!item || typeof item !== 'object') {{
+  console.log('Error: Invalid item provided:', typeof item);
+  return {{
+    json: {{
+      error: 'Invalid input item',
+      received: typeof item
+    }}
+  }};
+}}
+
+if (!item.json) {{
+  console.log('Warning: Item missing json property');
+  return {{
+    json: {{
+      error: 'Item missing json property',
+      itemStructure: Object.keys(item)
+    }}
+  }};
+}}
+
+const data = item.json;
+console.log('Processing item with fields:', Object.keys(data));
+
+try {{
+  // Main processing logic
+  {self._generate_processing_logic(operations, data_structure)}
+  
+  console.log('Item processed successfully');
+  
+  return {{
+    json: processedData
+  }};
+  
+}} catch (error) {{
+  console.log('Error processing item:', error.message);
+  return {{
+    json: {{
+      error: error.message,
+      originalData: data,
+      stack: error.stack
+    }}
+  }};
+}}"""
+
+    def _generate_processing_logic(self, operations: List[str], data_structure: Dict[str, Any]) -> str:
+        """Generate the main processing logic based on operations."""
+        
+        logic_parts = []
+        
+        # Start with data extraction/validation
+        logic_parts.append("""
+    // Extract and validate data fields
+    const processedData = {
+      ...data,
+      processedAt: new Date().toISOString(),
+      processingOperations: """ + str(operations) + """
+    };""")
+        
+        # Add operation-specific logic
+        if "extract" in operations:
+            logic_parts.append("""
+    
+    // Extract specific fields
+    if (data.title) processedData.extractedTitle = String(data.title).trim();
+    if (data.content) processedData.extractedContent = String(data.content).trim();""")
+        
+        if "transform" in operations:
+            logic_parts.append("""
+    
+    // Transform data
+    Object.keys(data).forEach(key => {
+      if (typeof data[key] === 'string') {
+        processedData[key + '_cleaned'] = data[key].trim().replace(/\\s+/g, ' ');
+      }
+    });""")
+        
+        if "validate" in operations:
+            logic_parts.append("""
+    
+    // Validate data
+    processedData.validationResults = {
+      hasTitle: !!data.title,
+      hasContent: !!data.content,
+      isValid: !!data.title && !!data.content
+    };""")
+        
+        if "aggregate" in operations:
+            logic_parts.append("""
+    
+    // Aggregate calculations
+    processedData.metrics = {
+      fieldCount: Object.keys(data).length,
+      textLength: Object.values(data).filter(v => typeof v === 'string').reduce((sum, str) => sum + str.length, 0)
+    };""")
+        
+        return "".join(logic_parts)
+
+    def _generate_professional_fallback(self, prompt: str, language: str, mode: str) -> Dict[str, Any]:
+        """Generate professional fallback code when AI is not available."""
+        
+        templates = self._get_professional_templates(language, mode)
+        
+        # Determine template based on prompt
+        if any(word in prompt.lower() for word in ["extract", "parse", "clean"]):
+            template_key = "extract_transform"
+        elif any(word in prompt.lower() for word in ["filter", "select"]):
+            template_key = "filter"
+        elif any(word in prompt.lower() for word in ["aggregate", "calculate"]):
+            template_key = "aggregate"
+        else:
+            template_key = "professional_basic"
+        
+        code = templates.get(template_key, templates["professional_basic"])
+        
+        return {
+            "code": code,
+            "language": language,
+            "mode": mode,
+            "intent": {"operation": template_key, "confidence": 0.8},
+            "confidence": 0.8,
+            "explanation": f"Generated professional {template_key} code template.",
+            "style": "professional"
+        }
+
+    def _get_professional_templates(self, language: str, mode: str) -> Dict[str, str]:
+        """Get professional code templates similar to Pipedream quality."""
+        
+        if language == "javascript":
+            if mode == "runOnceForAllItems":
+                return {
+                    "professional_basic": """// Professional data processing with comprehensive error handling
+
+// Validate and prepare input data
+if (!Array.isArray(items)) {
+  console.log('Warning: Expected array of items, received:', typeof items);
+  items = [];
+}
+
+console.log(`Starting processing of ${items.length} items...`);
+
+// Process all items with detailed logging and error handling
+const results = items.map((item, index) => {
+  try {
+    // Validate item structure
+    if (!item || typeof item !== 'object' || !item.json) {
+      console.log(`Warning: Invalid item structure at index ${index}`);
+      return {
+        json: {
+          error: 'Invalid item structure',
+          itemIndex: index,
+          received: typeof item
+        }
+      };
+    }
+    
+    const data = item.json;
+    console.log(`Processing item ${index + 1}/${items.length}:`, Object.keys(data));
+    
+    // Main processing logic
+    const processedData = {
+      ...data,
+      processed: true,
+      processedAt: new Date().toISOString(),
+      itemIndex: index
+    };
+    
+    console.log(`Successfully processed item ${index + 1}`);
+    
+    return {
+      json: processedData
+    };
+    
+  } catch (error) {
+    console.log(`Error processing item ${index + 1}: ${error.message}`);
+    return {
+      json: {
+        error: error.message,
+        itemIndex: index,
+        originalData: item.json || {},
+        stack: error.stack
+      }
+    };
+  }
+});
+
+console.log(`Processing complete. Successfully processed ${results.filter(r => !r.json.error).length}/${items.length} items`);
+
+return results;""",
+                    "extract_transform": """// Professional data extraction and transformation
+
+// Validate and prepare input data
+if (!Array.isArray(items)) {
+  console.log('Warning: Expected array of items, received:', typeof items);
+  items = [];
+}
+
+console.log(`Starting extraction and transformation of ${items.length} items...`);
+
+// Helper function to clean text
+const cleanText = (text) => {
+  if (typeof text !== 'string') return '';
+  return text.trim().replace(/\\s+/g, ' ').replace(/(\\r?\\n){2,}/g, '\\n');
+};
+
+// Process all items with comprehensive extraction
+const results = items.map((item, index) => {
+  try {
+    // Validate item structure
+    if (!item || typeof item !== 'object' || !item.json) {
+      console.log(`Warning: Invalid item structure at index ${index}`);
+      return {
+        json: {
+          error: 'Invalid item structure',
+          itemIndex: index
+        }
+      };
+    }
+    
+    const data = item.json;
+    console.log(`Extracting from item ${index + 1}/${items.length}:`, Object.keys(data));
+    
+    // Extract and transform data
+    const extractedData = {
+      // Preserve original data
+      ...data,
+      
+      // Add extraction metadata
+      extractedAt: new Date().toISOString(),
+      itemIndex: index,
+      
+      // Clean text fields
+      title: cleanText(data.title),
+      content: cleanText(data.content),
+      
+      // Handle citations
+      citations: Array.isArray(data.citation) 
+        ? data.citation.map(cleanText).filter(Boolean)
+        : typeof data.citation === 'string' 
+          ? [cleanText(data.citation)].filter(Boolean)
+          : [],
+      
+      // Preserve original ID if present
+      originalId: data.id || data.originalId || null
+    };
+    
+    console.log(`Successfully extracted from item ${index + 1}`);
+    
+    return {
+      json: extractedData
+    };
+    
+  } catch (error) {
+    console.log(`Error extracting from item ${index + 1}: ${error.message}`);
+    return {
+      json: {
+        error: error.message,
+        itemIndex: index,
+        originalData: item.json || {}
+      }
+    };
+  }
+});
+
+console.log(`Extraction complete. Successfully processed ${results.filter(r => !r.json.error).length}/${items.length} items`);
+
+return results;"""
+                }
+            else:  # runOnceForEachItem
+                return {
+                    "professional_basic": """// Professional single item processing
+
+// Validate input item
+if (!item || typeof item !== 'object') {
+  console.log('Error: Invalid item provided:', typeof item);
+  return {
+    json: {
+      error: 'Invalid input item',
+      received: typeof item
+    }
+  };
+}
+
+if (!item.json) {
+  console.log('Warning: Item missing json property');
+  return {
+    json: {
+      error: 'Item missing json property',
+      itemStructure: Object.keys(item)
+    }
+  };
+}
+
+const data = item.json;
+console.log('Processing item with fields:', Object.keys(data));
+
+try {
+  // Main processing logic
+  const processedData = {
+    ...data,
+    processed: true,
+    processedAt: new Date().toISOString()
+  };
+  
+  console.log('Item processed successfully');
+  
+  return {
+    json: processedData
+  };
+  
+} catch (error) {
+  console.log('Error processing item:', error.message);
+  return {
+    json: {
+      error: error.message,
+      originalData: data,
+      stack: error.stack
+    }
+  };
+}"""
+                }
+        
+        return {}
+
+    async def _generate_professional_explanation(self, code: str, intent: Dict[str, Any]) -> str:
+        """Generate explanation for professional code."""
+        
+        operations = intent.get("operations", ["process"])
+        
+        explanation = f"Generated professional code that performs {', '.join(operations)} operations with:"
+        explanation += "\n• Comprehensive input validation and error handling"
+        explanation += "\n• Detailed logging for debugging and monitoring"
+        explanation += "\n• Structured error responses with context"
+        explanation += "\n• Professional code organization and comments"
+        explanation += "\n• Robust data processing patterns"
+        
+        return explanation
 
 
 # Global instance

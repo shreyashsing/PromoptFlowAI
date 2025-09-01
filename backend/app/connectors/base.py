@@ -250,16 +250,17 @@ class BaseConnector(ABC):
     
     def _filter_auth_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Filter out authentication-related parameters that shouldn't be in connector schemas.
+        Filter out authentication-related and AI metadata parameters that shouldn't be in connector schemas.
         
-        These parameters are handled separately through the ConnectorExecutionContext.auth_tokens
-        and should not be passed as regular connector parameters.
+        These parameters are handled separately:
+        - Auth parameters: through ConnectorExecutionContext.auth_tokens
+        - AI metadata: internal system metadata for debugging/transparency
         
         Args:
             params: Original parameters dictionary
             
         Returns:
-            Filtered parameters dictionary without auth-related fields
+            Filtered parameters dictionary without auth-related or AI metadata fields
         """
         # List of parameter names that should be filtered out
         auth_param_names = {
@@ -268,13 +269,29 @@ class BaseConnector(ABC):
             'authorization', 'credentials', 'key', 'secret'
         }
         
-        # Filter out auth parameters
-        filtered = {k: v for k, v in params.items() if k.lower() not in auth_param_names}
+        # AI metadata fields that should be filtered out
+        ai_metadata_names = {
+            '_ai_confidence', '_ai_explanation', '_ai_generated', '_ai_intent',
+            '_code_complexity', '_decision_reasoning', '_risk_assessment', '_validation',
+            '_ai_reasoning', '_ai_context', '_ai_metadata', '_ai_debug'
+        }
+        
+        # Combine all fields to filter
+        filtered_param_names = auth_param_names | ai_metadata_names
+        
+        # Filter out auth and AI metadata parameters
+        filtered = {k: v for k, v in params.items() if k.lower() not in filtered_param_names}
         
         # Log if any parameters were filtered
         filtered_keys = set(params.keys()) - set(filtered.keys())
         if filtered_keys:
-            logger.info(f"Filtered auth parameters from {self.name}: {filtered_keys}")
+            auth_filtered = [k for k in filtered_keys if k.lower() in auth_param_names]
+            ai_filtered = [k for k in filtered_keys if k.lower() in ai_metadata_names]
+            
+            if auth_filtered:
+                logger.info(f"Filtered auth parameters from {self.name}: {auth_filtered}")
+            if ai_filtered:
+                logger.debug(f"Filtered AI metadata from {self.name}: {ai_filtered}")
         
         return filtered
 
