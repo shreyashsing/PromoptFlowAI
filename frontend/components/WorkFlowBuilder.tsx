@@ -38,12 +38,31 @@ import { GmailConnectorModal } from '@/components/connectors/gmail';
 import { GoogleSheetsConnectorModal } from '@/components/connectors/google_sheets';
 import { PerplexityConnectorModal } from '@/components/connectors/perplexity';
 import { GoogleTranslateConnectorModal } from '@/components/connectors/google_translate';
+import NodeDataSidebar from '@/components/NodeDataSidebar';
 
 interface WorkflowStep {
   connector_name: string;
   purpose: string;
   parameters: Record<string, any>;
   config?: Record<string, any>;
+}
+
+interface NodeExecutionResult {
+  success: boolean;
+  execution_id: string;
+  connector_name: string;
+  output_data: any;
+  formatted_output?: string;
+  execution_time_ms: number;
+  timestamp: string;
+  error_message?: string;
+  metadata: Record<string, any>;
+}
+
+interface SequentialExecutionState {
+  nodeResults: { [nodeId: string]: NodeExecutionResult };
+  executionOrder: string[];
+  currentlyExecuting: string | null;
 }
 
 interface Workflow {
@@ -251,6 +270,18 @@ export default function TrueReActWorkflowBuilder() {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Node execution states
+  const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [nodeExecutionResults, setNodeExecutionResults] = useState<Record<string, any>>({});
+  const [executingNodes, setExecutingNodes] = useState<Set<string>>(new Set());
+  
+  // Sequential execution state
+  const [sequentialExecution, setSequentialExecution] = useState<SequentialExecutionState>({
+    nodeResults: {},
+    executionOrder: [],
+    currentlyExecuting: null
+  });
+
   // Use shared Supabase client to avoid multiple instances warning
   const supabase = React.useMemo(() => createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -363,17 +394,26 @@ export default function TrueReActWorkflowBuilder() {
     console.log('🔧 Opening config for:', safeNodeData.connector_name);
     console.log('🔧 Node parameters:', safeNodeData.parameters);
     console.log('🔧 Full node data:', JSON.stringify(safeNodeData, null, 2));
+    
+    // Find the actual node in the flow to get the correct ID
+    const actualNode = nodes.find(n => n.data?.connector_name === nodeData.connector_name);
+    console.log('🔧 Found actual node:', actualNode ? actualNode.id : 'NOT FOUND');
+    
     setSelectedConnector(nodeData.connector_name);
 
-    // Add the node ID to the selected data for proper updates
-    const nodeWithId = {
+    // Use the actual node from the flow, not the clicked nodeData
+    const nodeWithId = actualNode ? {
+      ...actualNode.data,
+      id: actualNode.id
+    } : {
       ...nodeData,
-      id: nodeData.connector_name + (currentWorkflow?.steps?.findIndex((step: any) => step.connector_name === nodeData.connector_name) || 0)
+      id: nodeData.connector_name + '-0' // fallback ID
     };
 
+    console.log('🔧 Setting selectedNodeData:', JSON.stringify(nodeWithId, null, 2));
     setSelectedNodeData(nodeWithId);
     setConfigModalOpen(true);
-  }, [currentWorkflow]);
+  }, [currentWorkflow, nodes]); // Add nodes to dependencies
 
   // Add ReAct step - now consolidates into a single response
   const addReActStep = (
@@ -492,6 +532,239 @@ export default function TrueReActWorkflowBuilder() {
       localStorage.setItem('sidebar_width', sidebarWidth.toString());
     }
   }, [sidebarWidth]);
+
+  // Individual Node Execution Function
+  // Helper function to reset sequential execution state
+  const resetExecutionChain = useCallback(() => {
+    setSequentialExecution({
+      nodeResults: {},
+      executionOrder: [],
+      currentlyExecuting: null
+    });
+    
+    // Also clear legacy state
+    setNodeExecutionResults({});
+    
+    // Reset node visual states
+    setNodes(nodes => nodes.map(node => ({
+      ...node,
+      data: {
+        ...node.data,
+        status: undefined
+      }
+    })));
+    
+    console.log('🔄 Sequential execution chain reset');
+  }, [setNodes]);
+
+  // Helper function to find previous node in execution order
+  const findPreviousNode = useCallback((nodeId: string): string | null => {
+    const nodeIndex = sequentialExecution.executionOrder.indexOf(nodeId);
+    return nodeIndex > 0 ? sequentialExecution.executionOrder[nodeIndex - 1] : null;
+  }, [sequentialExecution.executionOrder]);
+
+  // Enhanced executeNode function with sequential data flow
+  const executeNodeSequential = useCallback(async (nodeId: string) => {
+    console.log('🔄 Executing node sequentially:', nodeId);
+    
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) {
+      console.error('Node not found:', nodeId);
+      return;
+    }
+
+    const connectorName = node.data?.connector_name || node.type;
+    if (!connectorName) {
+      console.error('No connector name found for node:', nodeId);
+      return;
+    }
+
+    // Find previous node and get its result
+    const previousNodeId = findPreviousNode(nodeId);
+    const previousResult = previousNodeId ? sequentialExecution.nodeResults[previousNodeId] : null;
+    
+    console.log('📊 Previous node:', previousNodeId);
+    console.log('📊 Previous result available:', !!previousResult);
+    if (previousResult) {
+      console.log('📊 Previous result data keys:', Object.keys(previousResult.output_data || {}));
+    }
+
+    // Update execution state
+    setSequentialExecution(prev => ({
+      ...prev,
+      currentlyExecuting: nodeId
+    }));
+
+    // Mark node as executing
+    setExecutingNodes(prev => {
+      const newSet = new Set(prev);
+      newSet.add(nodeId);
+      return newSet;
+    });
+
+    try {
+      // Get session token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('No authentication session found');
+      }
+
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      
+      // Get auth config (existing logic)
+      let authConfig = {};
+      const possibleAuthPaths = [
+        node.data?.config?.auth_config,
+        node.data?.config?.auth,
+        node.data?.auth_config,
+        node.data?.config?.authentication_config,
+        node.data?.authentication_config,
+        node.data?.auth,
+        node.data?.config?.settings?.auth_config,
+        node.data?.settings?.auth_config,
+        node.data?.config?.auth_config?.api_key ? { api_key: node.data.config.auth_config.api_key } : null,
+        node.data?.parameters?.auth_config,
+        node.data?.parameters?.auth
+      ];
+      
+      possibleAuthPaths.forEach((authPath, index) => {
+        if (authPath && Object.keys(authPath).length > 0) {
+          authConfig = authPath;
+          return;
+        }
+      });
+
+      // Prepare previous results for backend with proper node naming
+      let previousResults = {};
+      if (previousResult && previousNodeId) {
+        const previousNode = nodes.find(n => n.id === previousNodeId);
+        const previousConnectorName = previousNode?.data?.connector_name || previousNode?.type;
+        
+        console.log('🔗 Previous node connector name:', previousConnectorName);
+        console.log('🔗 Previous result output_data:', previousResult.output_data);
+        
+        if (previousConnectorName && previousResult.output_data) {
+          // Structure it as {connector_name: output_data}
+          previousResults = {
+            [previousConnectorName]: previousResult.output_data
+          };
+        }
+      }
+      
+      console.log('🔗 Sending structured previous results:', previousResults);
+      
+      // Execute the node with previous results
+      const response = await fetch(`${baseUrl}/api/v1/nodes/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          connector_name: connectorName,
+          parameters: node.data?.parameters || {},
+          auth_config: authConfig,
+          workflow_id: currentWorkflow?.id || null,
+          node_id: nodeId,
+          previous_results: previousResults  // 🔥 This is the key addition!
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const executionResult = await response.json();
+      console.log('✅ Sequential node execution successful:', executionResult);
+
+      // Store the result in sequential execution state
+      setSequentialExecution(prev => ({
+        ...prev,
+        nodeResults: {
+          ...prev.nodeResults,
+          [nodeId]: executionResult
+        },
+        executionOrder: prev.executionOrder.includes(nodeId) 
+          ? prev.executionOrder 
+          : [...prev.executionOrder, nodeId],
+        currentlyExecuting: null
+      }));
+
+      // Also store in legacy state for compatibility
+      setNodeExecutionResults(prev => ({
+        ...prev,
+        [nodeId]: executionResult
+      }));
+
+      // Update node visual status
+      setNodes(nodes => nodes.map(n => 
+        n.id === nodeId 
+          ? { ...n, data: { ...n.data, status: executionResult.success ? 'completed' : 'failed' } }
+          : n
+      ));
+
+    } catch (error) {
+      console.error('❌ Sequential node execution failed:', error);
+      
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isAuthError = errorMessage.includes('API key not found') || 
+                         errorMessage.includes('Authentication required') ||
+                         errorMessage.includes('401');
+      
+      const errorResult = {
+        success: false,
+        execution_id: `error_${Date.now()}`,
+        connector_name: connectorName,
+        output_data: {},
+        execution_time_ms: 0,
+        timestamp: new Date().toISOString(),
+        error_message: isAuthError ? 
+          `Authentication required: Please click on the ${connectorName} node to configure your API key` : 
+          errorMessage,
+        metadata: { 
+          error_type: isAuthError ? 'authentication_error' : 'execution_error',
+          needs_auth: isAuthError
+        }
+      };
+
+      // Store error in sequential state
+      setSequentialExecution(prev => ({
+        ...prev,
+        nodeResults: {
+          ...prev.nodeResults,
+          [nodeId]: errorResult
+        },
+        currentlyExecuting: null
+      }));
+
+      // Also store in legacy state
+      setNodeExecutionResults(prev => ({
+        ...prev,
+        [nodeId]: errorResult
+      }));
+
+      // Update node visual status
+      setNodes(nodes => nodes.map(n => 
+        n.id === nodeId 
+          ? { ...n, data: { ...n.data, status: 'failed' } }
+          : n
+      ));
+    } finally {
+      // Remove from executing set
+      setExecutingNodes(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(nodeId);
+        return newSet;
+      });
+    }
+  }, [nodes, currentWorkflow, supabase, setNodes, sequentialExecution, findPreviousNode]);
+
+  // Original executeNode function (now delegates to sequential execution)
+  const executeNode = useCallback(async (nodeId: string) => {
+    // Use sequential execution as the default behavior
+    return executeNodeSequential(nodeId);
+  }, [executeNodeSequential]);
 
   // Handle workflow execution
   const handleExecuteWorkflow = useCallback(async () => {
@@ -1417,21 +1690,40 @@ export default function TrueReActWorkflowBuilder() {
                     Watch Agent
                   </Button>
                   {currentWorkflow && (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        console.log('🔥 Button clicked - calling handleExecuteWorkflow');
-                        handleExecuteWorkflow();
-                      }}
-                      disabled={isExecuting}
-                    >
-                      {isExecuting ? (
-                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                      ) : (
-                        <Play className="w-4 h-4 mr-1" />
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          console.log('🔥 Button clicked - calling handleExecuteWorkflow');
+                          handleExecuteWorkflow();
+                        }}
+                        disabled={isExecuting}
+                      >
+                        {isExecuting ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <Play className="w-4 h-4 mr-1" />
+                        )}
+                        {isExecuting ? 'Running...' : 'Run Workflow'}
+                      </Button>
+                      
+                      {/* Sequential Execution Controls */}
+                      {sequentialExecution.executionOrder.length > 0 && (
+                        <div className="flex gap-2 items-center pl-2 border-l border-gray-600">
+                          <span className="text-xs text-gray-400">
+                            Chain: {sequentialExecution.executionOrder.length} nodes
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={resetExecutionChain}
+                            className="text-xs px-2 py-1 h-7"
+                          >
+                            Reset Chain
+                          </Button>
+                        </div>
                       )}
-                      {isExecuting ? 'Running...' : 'Run Workflow'}
-                    </Button>
+                    </>
                   )}
                   <Button
                     size="sm"
@@ -1457,6 +1749,7 @@ export default function TrueReActWorkflowBuilder() {
               onConnect={onConnect}
               onNodeClick={(_, node) => {
                 console.log('ReactFlow node clicked:', node);
+                setSelectedNode(node); // Set selected node for sidebar
                 handleNodeClick(node.data);
               }}
               nodeTypes={nodeTypes}
@@ -1552,7 +1845,80 @@ export default function TrueReActWorkflowBuilder() {
             return <GmailConnectorModal {...modalProps} />;
           case 'perplexity':
           case 'perplexity_search':
-            return <PerplexityConnectorModal {...modalProps} />;
+            return (
+              <PerplexityConnectorModal
+                isOpen={configModalOpen}
+                onClose={() => {
+                  console.log('Closing config modal');
+                  setConfigModalOpen(false);
+                  setSelectedConnector(null);
+                  setSelectedNodeData(null);
+                }}
+                initialConfig={selectedNodeData?.config || { parameters: selectedNodeData?.parameters }}
+                initialData={normalizedInitialData}
+                onSave={(config) => {
+                  // Handle saving connector configuration
+                  const safeConfig = { ...config };
+                  if (safeConfig.auth_config?.api_key) {
+                    safeConfig.auth_config = { ...safeConfig.auth_config, api_key: '[REDACTED]' };
+                  }
+                  console.log('Saving Perplexity connector config:', safeConfig);
+                  console.log('Selected node data ID:', selectedNodeData?.id);
+                  console.log('Current nodes in flow:', nodes.map(n => ({ id: n.id, connector: n.data?.connector_name })));
+
+                  // Update the workflow nodes with the new configuration
+                  if (selectedNodeData && selectedNodeData.id) {
+                    console.log('🔧 About to update node with ID:', selectedNodeData.id);
+                    console.log('🔧 Config being saved:', JSON.stringify(config, null, 2));
+                    console.log('🔧 Current nodes before update:', nodes.map(n => ({ 
+                      id: n.id, 
+                      connector: n.data?.connector_name,
+                      hasConfig: !!n.data?.config,
+                      hasAuthConfig: !!(n.data?.config?.auth_config || n.data?.auth_config)
+                    })));
+                    
+                    setNodes((nds) =>
+                      nds.map((node) => {
+                        if (node.id === selectedNodeData.id) {
+                          const updatedNode = {
+                            ...node,
+                            data: {
+                              ...node.data,
+                              parameters: config.parameters || config,
+                              config: config, // Also save as config for backward compatibility
+                            },
+                          };
+                          console.log('✅ Updated node data for ID:', selectedNodeData.id);
+                          console.log('✅ Updated node config:', JSON.stringify(updatedNode.data.config, null, 2));
+                          return updatedNode;
+                        }
+                        return node;
+                      })
+                    );
+
+                    // Also update the workflow state if it exists
+                    if (currentWorkflow) {
+                      const updatedWorkflow: Workflow = {
+                        ...currentWorkflow,
+                        steps: currentWorkflow.steps.map((step: WorkflowStep) => {
+                          if (step.connector_name === selectedConnector) {
+                            return {
+                              ...step,
+                              parameters: config.parameters || config,
+                              config: config, // Also save full config in workflow
+                            };
+                          }
+                          return step;
+                        })
+                      };
+                      setCurrentWorkflow(updatedWorkflow);
+                    }
+                  }
+
+                  setConfigModalOpen(false);
+                }}
+              />
+            );
           case 'google_translate':
             return <GoogleTranslateConnectorModal {...modalProps} />;
           default:
@@ -1618,6 +1984,17 @@ export default function TrueReActWorkflowBuilder() {
             );
         }
       })()}
+
+      {/* Node Data Sidebar - Right side */}
+      <NodeDataSidebar
+        selectedNode={selectedNode}
+        isExecuting={selectedNode ? executingNodes.has(selectedNode.id) : false}
+        onExecuteNode={executeNode}
+        onExecuteNodeSequential={executeNodeSequential}
+        executionResults={nodeExecutionResults}
+        sequentialResults={sequentialExecution.nodeResults}
+        previousNodeId={selectedNode ? findPreviousNode(selectedNode.id) : null}
+      />
     </div>
   );
 }

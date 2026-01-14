@@ -19,6 +19,8 @@ from app.api.triggers import router as triggers_router
 from app.api.monitoring import router as monitoring_router
 from app.api.connector_metadata import router as connector_metadata_router
 from app.api.connector_fields import router as connector_fields_router
+from app.api.node_execution import router as node_execution_router
+from app.api.ai_agent import router as ai_agent_router  # New AI Agent
 from app.services.rag import init_rag_system
 # Removed old conversational agent - now using True ReAct Agent
 from app.services.trigger_system import get_trigger_system
@@ -129,6 +131,8 @@ def create_application() -> FastAPI:
     app.include_router(monitoring_router, prefix="/api/v1")
     app.include_router(connector_metadata_router, prefix="/api/v1")
     app.include_router(connector_fields_router, prefix="/api/v1")
+    app.include_router(node_execution_router, prefix="/api/v1")
+    app.include_router(ai_agent_router)  # New AI Agent router
 
     return app
 

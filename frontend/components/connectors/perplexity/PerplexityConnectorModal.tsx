@@ -118,7 +118,7 @@ export function PerplexityConnectorModal({
             if (response.ok) {
                 const data = await response.json();
                 const perplexityToken = data.tokens?.find((token: any) => {
-                    return token.connector_name === 'perplexity' && 
+                    return token.connector_name === 'perplexity_search' && 
                            token.token_type === 'api_key';
                 });
 
@@ -180,7 +180,7 @@ export function PerplexityConnectorModal({
                     'Authorization': `Bearer ${session?.access_token}`,
                 },
                 body: JSON.stringify({
-                    connector_name: 'perplexity',
+                    connector_name: 'perplexity_search',
                     token_type: 'api_key',
                     token_data: {
                         api_key: config.auth_config.api_key
